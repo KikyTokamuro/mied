@@ -512,7 +512,6 @@ proc CreateWindow {id} {
     bind $win.content.ctext <Control-s>     [list SaveBuffer $id]
     bind $win.content.ctext <Control-w>     [list CloseBuffer $id]
     bind $win.content.ctext <Control-f>     [list ShowFindBar $id]
-    bind $win.content.ctext <Control-g>     [list GotoLineInBuffer $id]
     bind $win.content.ctext <Control-l>     [list SelectCurrentLine $id]
     bind $win.content.ctext <Control-slash> [list ToggleComment $id]
     bind $win.content.ctext <Return>        [list IndentOnReturn $id]
@@ -1033,7 +1032,6 @@ proc BuildUI {} {
     bind . <Control-s> SaveActiveBuffer
     bind . <Control-b> ToggleSidebar
     bind . <Control-f> OpenFindDialog
-    bind . <Control-g> {GotoLineActive}
     bind . <Control-Tab> {CycleBuffer 1}
     bind . <Control-Shift-Tab> {CycleBuffer -1}
 }
@@ -1277,60 +1275,6 @@ proc ReplaceAllInBuffer {id} {
 }
 
 # --- Editing helpers ------------------------------------------------------
-
-# Ctrl+G on the active buffer.
-proc GotoLineActive {} {
-    global ActiveBufferId
-    if {$ActiveBufferId eq ""} return
-    GotoLineInBuffer $ActiveBufferId
-}
-
-# Prompt for a line number and jump there.
-proc GotoLineInBuffer {id} {
-    global Buffers Config
-    if {![SafeWindowExists $id]} return
-
-    set ctext $Buffers($id,window).content.ctext
-    set maxLine [lindex [split [$ctext index end-1c] "."] 0]
-
-    set ::_gotoLine ""
-    catch {destroy .goto}
-    toplevel .goto
-    wm title .goto "Go to line"
-    wm transient .goto .
-    wm resizable .goto 0 0
-    .goto configure -bg $Config(bg)
-
-    label .goto.l -text "Line (1–$maxLine):" -bg $Config(bg) -fg $Config(fg) \
-        -font $Config(ui_font)
-    pack .goto.l -padx 10 -pady {10 4}
-
-    entry .goto.e -textvariable ::_gotoLine -font $Config(ui_font) \
-        -bg $Config(window_bg) -fg $Config(fg) -width 12
-    pack .goto.e -padx 10 -pady 4
-
-    bind .goto.e <Return> {
-        destroy .goto
-    }
-    bind .goto <Escape> {
-        set ::_gotoLine ""
-        destroy .goto
-    }
-
-    focus .goto.e
-    grab .goto
-    tkwait window .goto
-
-    if {![string is integer -strict $::_gotoLine]} return
-    set line $::_gotoLine
-    if {$line < 1} { set line 1 }
-    if {$line > $maxLine} { set line $maxLine }
-    $ctext mark set insert "$line.0"
-    $ctext see insert
-    $ctext tag remove sel 1.0 end
-    $ctext tag add sel "$line.0" "$line.0 lineend"
-    UpdateLineCounter $id
-}
 
 # Select the line that contains the insert cursor (Ctrl+L).
 proc SelectCurrentLine {id} {
