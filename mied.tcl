@@ -1,83 +1,73 @@
 #!/usr/bin/env tclsh
 #
-# Smalltalk Editor — рефакторенная версия
-# =======================================
-# Оригинальный код был переработан для устранения дублирования.
-# Основные изменения:
-#   • Все canvas-кнопки создаются через единую процедуру MakeFlatButton
-#   • Панель Find/Replace и тулбар генерируются циклами из массивов конфигурации
-#   • Повторяющиеся проверки существования окна вынесены в SafeWindowExists
-#   • Общая логика поиска вынесена в FindInBuffer
-#   • Добавлены комментарии ко всем нетривиальным участкам
-#
+# Mied - a small editor on Tcl/Tk (ctext).
 
 package require Tk
+package require ctext
 
-# ============================================================================
-# ГЛОБАЛЬНОЕ СОСТОЯНИЕ
-# ============================================================================
+# --- Application state ----------------------------------------------------
 
-array set Buffers {}          ;# Хранилище всех открытых буферов (id -> поля)
-set NextBufferId 0            ;# Счётчик для генерации уникальных ID буферов
-set ActiveBufferId ""         ;# ID текущего активного буфера
-set ZIndex 100                ;# Z-индекс для поднятия окон на передний план
-set CreatingBuffer 0          ;# Флаг блокировки повторного создания буфера
-set SidebarVisible 1          ;# Флаг видимости боковой панели
+array set Buffers {}          ;# per-buffer fields: id,name,path,content,...
+set ActiveBufferId ""         ;# target of Save / Find / highlighting extras
+set ZIndex 100                ;# stacking counter used with raise
+set CreatingBuffer 0          ;# debounce for New/Open on a held hotkey
+set SidebarVisible 1
 
-# --- Состояние поиска/замены ---
-set FindPattern ""            ;# Текущий шаблон поиска
-set ReplacePattern ""         ;# Текущий шаблон замены
-set FindCaseSensitive 0       ;# Флаг чувствительности к регистру
+set FindPattern ""
+set ReplacePattern ""
+set FindCaseSensitive 0
 
-# ============================================================================
-# КОНФИГУРАЦИЯ (светлая тема)
-# ============================================================================
-# Все цвета и шрифты собраны в одном месте для удобства кастомизации.
+# --- Layout ---------------------------------------------------------------
 
+set Layout(toolbar_h) 32
+set Layout(sidebar_w) 180
+set Layout(gap)       2       ;# gutter between sidebar and desktop
+
+# --- Theme ----------------------------------------------------------------
+
+set Config(accent)       "#5d7e73"
 set Config(bg)           "#e8e8e8"
 set Config(fg)           "#666666"
-set Config(accent)       "#4a6fa5"
 set Config(toolbar_bg)   "#c8c8c8"
 set Config(sidebar_bg)   "#c8c8c8"
 set Config(window_bg)    "#ffffff"
 set Config(titlebar_bg)  "#c8c8c8"
 set Config(border)       "#aaaaaa"
-set Config(font)         {Helvetica 13}
-set Config(title_font)   {Helvetica 11}
+set Config(font)         {"Fira Code" 9}
+set Config(font_bold)    {"Fira Code" 9 bold}
+set Config(ui_font)      {"Fira Code" 9}
 set Config(status_fg)    "#666666"
 set Config(close_hover)  "#cc0000"
-set Config(min_hover)    "#4a6fa5"
-set Config(btn_bg)       "#e8e8e8"
+set Config(min_hover)    "#5d7e73"
 set Config(btn_hover_bg) "#bbbbbb"
-set Config(sep_color)    "#999999"
 set Config(hover_fg)     "#000000"
 set Config(title_fg)     "#444444"
 set Config(list_fg)      "#444444"
 set Config(insert_color) "#000000"
-set Config(sel_bg)       "#4a6fa5"
+set Config(sel_bg)       "#5d7e73"
 set Config(sel_fg)       "#ffffff"
 set Config(scroll_bg)    "#cccccc"
 set Config(header_fg)    "#666666"
 set Config(linenum_bg)   "#f0f0f0"
 set Config(linenum_fg)   "#888888"
-set Config(linenum_font) {Courier 11}
 
-# ============================================================================
-# УТИЛИТЫ
-# ============================================================================
+# Monochrome highlight: dark ink for structure, lighter gray for asides.
+set Config(hl_keyword)   "#222222"
+set Config(hl_comment)   "#9a9a9a"
+set Config(hl_string)    "#555555"
+set Config(hl_number)    "#333333"
+set Config(hl_punct)     "#777777"
+set Config(hl_preproc)   "#444444"
 
-# --- SafeWindowExists ---
-# Проверяет, существует ли окно буфера с заданным id.
-# Используется перед любым обращением к виджетам буфера,
-# чтобы избежать ошибок при закрытии/переключении.
+# --- Helpers --------------------------------------------------------------
+
+# True if the buffer window for id is still mapped.
 proc SafeWindowExists {id} {
     global Buffers
     return [expr {[info exists Buffers($id,window)] && [winfo exists $Buffers($id,window)]}]
 }
 
-# --- AllBufferIds ---
-# Возвращает отсортированный список ID всех существующих буферов.
-# Централизует паттерн обхода массива Buffers.
+# Sorted list of live buffer ids.
 proc AllBufferIds {} {
     global Buffers
     set ids [list]
@@ -87,31 +77,66 @@ proc AllBufferIds {} {
     return [lsort -integer $ids]
 }
 
-# --- MakeFlatButton ---
-# Универсальная фабрика плоских canvas-кнопок.
-# Параметры:
-#   parent   — родительский виджет (frame или окно)
-#   name     — имя создаваемого canvas
-#   width    — ширина кнопки
-#   height   — высота кнопки
-#   text     — текст на кнопке
-#   font     — шрифт текста
-#   bg       — фоновый цвет
-#   fg       — цвет текста
-#   hover_bg — цвет фона при наведении
-#   hover_fg — цвет текста при наведении (пусто = не менять)
-#   cmd      — команда по клику
-#   packopts — дополнительные опции pack (например, -side right -padx 2)
-#
-# Создаёт прямоугольник-заглушку (tag "hit") для перехвата событий мыши
-# и текстовую метку (tag "label"). bind вешается на "hit".
+# Lowest unused positive id (reused after close so untitled-N stays compact).
+proc AllocBufferId {} {
+    set id 1
+    foreach used [AllBufferIds] {
+        if {$used != $id} {
+            return $id
+        }
+        incr id
+    }
+    return $id
+}
+
+# Places .sidebar / .desktop with a toolbar offset and a sidebar gutter.
+proc PlaceDesktop {} {
+    global SidebarVisible Layout
+
+    set th $Layout(toolbar_h)
+    set sw $Layout(sidebar_w)
+    set gap $Layout(gap)
+
+    if {$SidebarVisible} {
+        place .sidebar -x 0 -y $th -width $sw -relheight 1 -height -$th
+        set dx [expr {$sw + $gap - 1}]
+        place .desktop -x $dx -y $th -relwidth 1 -width -$dx -relheight 1 -height -$th
+    } else {
+        place forget .sidebar
+        place .desktop -x 0 -y $th -relwidth 1 -width 0 -relheight 1 -height -$th
+    }
+}
+
+# Geometry of a maximized buffer: inset by Layout(gap) so the desktop
+# background shows as a rim (same idea as the strip under the toolbar).
+proc MaximizedGeom {} {
+    global Desktop Layout
+    set g $Layout(gap)
+    set dw [winfo width $Desktop]
+    set dh [winfo height $Desktop]
+    return [list $g $g [expr {max(50, $dw - 2 * $g)}] [expr {max(50, $dh - 2 * $g)}]]
+}
+
+# Pins the resize grip above the status bar (and findbar, if shown).
+proc PlaceResizeHandle {id} {
+	global Buffers
+	if {![SafeWindowExists $id]} return
+
+    set win $Buffers($id,window)
+    set yOff -22
+    if {[info exists Buffers($id,findbar)] && $Buffers($id,findbar)} {
+        set yOff -48
+    }
+    place $win.resize -relx 1.0 -rely 1.0 -anchor se -y $yOff
+    raise $win.resize
+}
+
+# Flat canvas button. Uses grid when -row/-column is present, otherwise pack.
 proc MakeFlatButton {parent name width height text font bg fg hover_bg hover_fg cmd geomopts} {
     set path ${parent}.${name}
     canvas $path -width $width -height $height -bg $bg \
         -highlightthickness 0 -cursor hand2
 
-    # Определяем менеджер геометрии: pack (тулбар, titlebar)
-    # или grid (findbar). Grid-опции содержат -row/-column.
     set isGrid 0
     foreach opt $geomopts {
         if {[string match "-row*" $opt] || [string match "-column*" $opt]} {
@@ -120,25 +145,26 @@ proc MakeFlatButton {parent name width height text font bg fg hover_bg hover_fg 
         }
     }
     if {$isGrid} {
-        eval grid $path $geomopts
+        grid $path {*}$geomopts
     } else {
-        eval pack $path $geomopts
+        pack $path {*}$geomopts
     }
 
-    # Фоновый прямоугольник, покрывающий всю площадь кнопки
-    $path create rectangle 0 0 $width $height -fill $bg -outline "" -tags hit
-    # Текстовая метка по центру
+    $path create rectangle 0 0 $width $height -fill $bg -outline "" -tags {hit bg}
     $path create text [expr {$width / 2}] [expr {$height / 2}] \
         -text $text -fill $fg -font $font -tags {hit label}
 
-    # Клик
     $path bind hit <Button-1> $cmd
 
-    # Наведение: меняем фон
-    $path bind hit <Enter> [list $path configure -bg $hover_bg]
-    $path bind hit <Leave> [list $path configure -bg $bg]
+    $path bind hit <Enter> [list apply {{path hover_bg} {
+        $path configure -bg $hover_bg
+        $path itemconfigure bg -fill $hover_bg
+    }} $path $hover_bg]
+    $path bind hit <Leave> [list apply {{path bg} {
+        $path configure -bg $bg
+        $path itemconfigure bg -fill $bg
+    }} $path $bg]
 
-    # Наведение: меняем цвет текста, если задан hover_fg
     if {$hover_fg ne ""} {
         $path bind hit <Enter> +[list $path itemconfigure label -fill $hover_fg]
         $path bind hit <Leave> +[list $path itemconfigure label -fill $fg]
@@ -147,172 +173,285 @@ proc MakeFlatButton {parent name width height text font bg fg hover_bg hover_fg 
     return $path
 }
 
-# --- MakeToolbarButton ---
-# Специализация MakeFlatButton для кнопок тулбара.
-# Все кнопки тулбара имеют одинаковую высоту (24) и одинаковые
-# цвета наведения, поэтому параметры свёрнуты.
+# Toolbar button with a fixed 24px height.
 proc MakeToolbarButton {name width text cmd} {
     global Config
-    MakeFlatButton .toolbar $name $width 24 $text \
-        {Helvetica 10} $Config(toolbar_bg) $Config(fg) \
+    MakeFlatButton .toolbar.inner $name $width 24 $text \
+        $Config(ui_font) $Config(toolbar_bg) $Config(fg) \
         $Config(btn_hover_bg) $Config(hover_fg) $cmd \
         [list -side left -padx 2 -pady 3]
 }
 
-# ============================================================================
-# УПРАВЛЕНИЕ БУФЕРАМИ
-# ============================================================================
+# --- Syntax highlighting --------------------------------------------------
 
-# --- NewBuffer ---
-# Создаёт новый пустой буфер с уникальным именем "untitled-N".
-# Флаг CreatingBuffer предотвращает случайное двойное создание
-# при быстром нажатии Ctrl+N.
-proc NewBuffer {} {
-    global NextBufferId Buffers CreatingBuffer
+# Language from extension or shebang: tcl, c, sh, or empty.
+proc DetectLanguage {path content} {
+    set ext [string tolower [file extension $path]]
+    switch -- $ext {
+        .tcl - .tk - .itcl - .tm { return tcl }
+        .c - .h - .cpp - .cc - .cxx - .hpp { return c }
+        .sh - .bash - .ksh - .zsh { return sh }
+    }
+    set line [string trim [lindex [split $content \n] 0]]
+    if {[string match "#!*" $line]} {
+        if {[string match "*tclsh*" $line] || [string match "*wish*" $line]} {
+            return tcl
+        }
+        if {[string match "*bash*" $line] || [string match "*dash*" $line] \
+                || [regexp {/bin/(ba|k|z)?sh} $line]} {
+            return sh
+        }
+    }
+    return ""
+}
+
+# Comment prefix used by Ctrl+/.
+proc CommentPrefix {lang} {
+    switch -- $lang {
+        c { return "//" }
+        default { return "#" }
+    }
+}
+
+# Drop previous ctext classes and install a monochrome set for lang.
+proc ApplySyntaxHighlighting {ctext lang} {
+    global Config
+
+    catch {::ctext::clearHighlightClasses $ctext}
+    catch {::ctext::disableComments $ctext}
+
+    if {$lang eq ""} {
+        $ctext highlight 1.0 end
+        return
+    }
+
+    set kw $Config(hl_keyword)
+    set cm $Config(hl_comment)
+    set st $Config(hl_string)
+    set nu $Config(hl_number)
+    set pu $Config(hl_punct)
+    set pp $Config(hl_preproc)
+
+    switch -- $lang {
+        tcl {
+            ::ctext::addHighlightClass $ctext keywords $kw {
+                proc method constructor destructor namespace package require
+                if else elseif then switch while for foreach break continue
+                return catch error try trap finally throw expr eval uplevel
+                upvar global variable set unset lappend lindex llength lrange
+                lsearch lsort lreplace linsert concat join split string
+                array dict info interp rename apply yield coroutine
+                source open close read puts gets seek tell eof fconfigure
+                bind bindtags event after update winfo wm pack grid place
+                frame toplevel label button entry listbox canvas text
+                checkbutton radiobutton scale scrollbar menu menubutton
+                ttk::frame ttk::button ttk::entry ttk::label ttk::scrollbar
+                incr append subst regexp regsub scan format clock file
+                cd pwd glob exec pid exit return -code
+            }
+            ::ctext::addHighlightClassWithOnlyCharStart $ctext vars $pu "\$"
+            ::ctext::addHighlightClassForSpecialChars $ctext punct $pu {[]{}\\}
+            ::ctext::addHighlightClassForRegexp $ctext strings $st {"(\\.|[^"\\])*"}
+            ::ctext::addHighlightClassForRegexp $ctext comments $cm {#[^\n\r]*}
+        }
+        c {
+            ::ctext::addHighlightClass $ctext keywords $kw {
+                auto break case char const continue default do double else
+                enum extern float for goto if inline int long register
+                restrict return short signed sizeof static struct switch
+                typedef union unsigned void volatile while _Bool _Complex
+                _Imaginary include define ifdef ifndef endif pragma undef
+                true false NULL
+            }
+            catch {::ctext::enableComments $ctext}
+            ::ctext::addHighlightClassForRegexp $ctext comments $cm {//[^\n\r]*}
+            ::ctext::addHighlightClassForRegexp $ctext preproc $pp {^[[:space:]]*#[[:space:]]*[a-zA-Z]+}
+            ::ctext::addHighlightClassForRegexp $ctext strings $st {"(\\.|[^"\\])*"}
+            ::ctext::addHighlightClassForRegexp $ctext chars $st {'(\\.|[^'\\])'}
+            ::ctext::addHighlightClassForRegexp $ctext numbers $nu {\m[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?\M}
+            ::ctext::addHighlightClassForSpecialChars $ctext punct $pu {()[]{};,}
+        }
+        sh {
+            ::ctext::addHighlightClass $ctext keywords $kw {
+                if then else elif fi case esac for in do done while until
+                function return break continue exit export local readonly
+                unset shift trap eval exec source alias unalias test
+                echo printf read cd pwd set unset declare typeset
+            }
+            ::ctext::addHighlightClassWithOnlyCharStart $ctext vars $pu "\$"
+            ::ctext::addHighlightClassForRegexp $ctext strings $st {"(\\.|[^"\\])*"}
+            ::ctext::addHighlightClassForRegexp $ctext squote $st {'[^']*'}
+            ::ctext::addHighlightClassForRegexp $ctext comments $cm {#[^\n\r]*}
+            ::ctext::addHighlightClassForSpecialChars $ctext punct $pu {[]{}();|}
+        }
+    }
+
+    $ctext tag configure keywords -font $Config(font_bold) -foreground $kw
+    $ctext tag configure comments -font $Config(font) -foreground $cm
+    $ctext highlight 1.0 end
+}
+
+# Detect language from path/content and restyle the widget.
+proc ApplySyntaxForBuffer {id} {
+    global Buffers
+    if {![SafeWindowExists $id]} return
+
+    set content $Buffers($id,content)
+    if {[SafeWindowExists $id]} {
+        set content [$Buffers($id,window).content.ctext get 1.0 end-1c]
+    }
+    set lang [DetectLanguage $Buffers($id,path) $content]
+    set Buffers($id,lang) $lang
+    ApplySyntaxHighlighting $Buffers($id,window).content.ctext $lang
+    UpdateLineCounter $id
+}
+
+# --- Buffer lifecycle -----------------------------------------------------
+
+# Create a buffer, its window, and make it active. Empty name → untitled-N.
+proc CreateBuffer {name path content} {
+    global Buffers CreatingBuffer
 
     if {$CreatingBuffer} return
     set CreatingBuffer 1
 
-    incr NextBufferId
-    set id $NextBufferId
-    set name "untitled-$id"
+    set id [AllocBufferId]
+    if {$name eq ""} {
+        set name "untitled-$id"
+    }
 
-    # Инициализация полей буфера
-    set Buffers($id,id)       $id
-    set Buffers($id,name)     $name
-    set Buffers($id,path)     ""
-    set Buffers($id,content)  ""
-    set Buffers($id,modified) 0
-    set Buffers($id,visible)  1
+    set Buffers($id,id)        $id
+    set Buffers($id,name)      $name
+    set Buffers($id,path)      $path
+    set Buffers($id,content)   $content
+    set Buffers($id,modified)  0
+    set Buffers($id,visible)   1
+    set Buffers($id,maximized) 0
+    set Buffers($id,findbar)   0
+    set Buffers($id,lang)      [DetectLanguage $path $content]
 
     CreateWindow $id
     UpdateBufferList
     SetActiveBuffer $id
 
-    # Снимаем блокировку через 100 мс
     after 100 {set ::CreatingBuffer 0}
+    return $id
 }
 
-# --- CreateWindow ---
-# Строит полное окно редактора для буфера с заданным id.
-# Окно состоит из:
-#   1. Заголовка (titlebar) с кнопками сворачивания и закрытия
-#   2. Области редактирования (text + line numbers + scrollbars)
-#   3. Панели поиска/замены (findbar, скрыта по умолчанию)
-#   4. Строки состояния (statusbar)
-#   5. Ручки изменения размера (resize handle)
+# Empty untitled buffer.
+proc NewBuffer {} {
+    CreateBuffer "" "" ""
+}
+
+# Build the Tk window: titlebar, ctext, scrollbars, status, findbar.
 proc CreateWindow {id} {
-    global Buffers Config ZIndex Desktop
+    global Buffers Config Desktop
 
     set win $Desktop.buffer$id
     set Buffers($id,window) $win
 
-    # Каскадное позиционирование: каждое новое окно смещено
-    # на 30×25 пикселей от предыдущего, циклически по модулю 5.
     set x [expr {20 + ($id % 5) * 30}]
     set y [expr {20 + ($id % 5) * 25}]
 
-    # Основной фрейм окна
     frame $win -bg $Config(border) -bd 1 -relief flat
 
-    # === ЗАГОЛОВОК (titlebar) ===
     frame $win.titlebar -bg $Config(titlebar_bg) -height 26 -cursor fleur
     grid $win.titlebar -row 0 -column 0 -sticky ew
 
-    # Кнопка сворачивания («_»)
     MakeFlatButton $win.titlebar minbtn 20 20 "_" \
-        {Helvetica 12 bold} $Config(titlebar_bg) $Config(status_fg) \
+        $Config(ui_font) $Config(titlebar_bg) $Config(status_fg) \
         $Config(titlebar_bg) $Config(min_hover) [list MinimizeWindow $id] \
         [list -side right -padx 2]
 
-    # Кнопка закрытия («x»)
     MakeFlatButton $win.titlebar closebtn 20 20 "x" \
-        {Helvetica 12 bold} $Config(titlebar_bg) $Config(status_fg) \
+        $Config(ui_font) $Config(titlebar_bg) $Config(status_fg) \
         $Config(titlebar_bg) $Config(close_hover) [list CloseBuffer $id] \
         [list -side right -padx 6]
 
-    # Метка с именем файла
     label $win.titlebar.label -text "$Buffers($id,name)" \
         -bg $Config(titlebar_bg) -fg $Config(title_fg) \
-        -font $Config(title_font) -anchor w
+        -font $Config(ui_font) -anchor w
     pack $win.titlebar.label -side left -padx 8 -pady 2 -fill x -expand 1
 
-    # === ОБЛАСТЬ РЕДАКТИРОВАНИЯ ===
     frame $win.content -bg $Config(window_bg)
     grid $win.content -row 1 -column 0 -sticky nsew
 
-    # Номера строк (canvas слева от текста)
-    canvas $win.content.linenum -width 50 -bg $Config(linenum_bg) -highlightthickness 0
-    grid $win.content.linenum -row 0 -column 0 -sticky ns
-
-    # Основной текстовый виджет
-    text $win.content.text -bg $Config(window_bg) -fg $Config(fg) \
+    ctext $win.content.ctext -bg $Config(window_bg) -fg $Config(fg) \
         -font $Config(font) -wrap none \
-        -yscrollcommand [list SyncScroll $id] \
+        -yscrollcommand [list $win.content.vsb set] \
         -xscrollcommand [list $win.content.hsb set] \
         -undo 1 -maxundo 100 \
         -insertbackground $Config(insert_color) \
         -selectbackground $Config(sel_bg) \
         -selectforeground $Config(sel_fg) \
         -borderwidth 0 -highlightthickness 0 \
-        -padx 4 -pady 4
+        -padx 4 -pady 4 \
+        -linemap 1 \
+        -linemapfg $Config(linenum_fg) \
+        -linemapbg $Config(linenum_bg) \
+        -linemap_select_fg $Config(sel_fg) \
+        -linemap_select_bg $Config(sel_bg) \
+        -tabs [font measure $Config(font) "    "]
 
-    # Полосы прокрутки
+    $win.content.ctext tag configure found \
+        -background $Config(accent) \
+        -foreground $Config(insert_color)
+    $win.content.ctext tag raise found
+
     ttk::scrollbar $win.content.vsb -orient vertical \
-        -command [list $win.content.text yview]
+        -command [list $win.content.ctext yview]
     ttk::scrollbar $win.content.hsb -orient horizontal \
-        -command [list $win.content.text xview]
+        -command [list $win.content.ctext xview]
 
-    grid $win.content.text -row 0 -column 1 -sticky nsew
-    grid $win.content.vsb  -row 0 -column 2 -sticky ns
-    grid $win.content.hsb  -row 1 -column 0 -columnspan 2 -sticky ew
+    grid $win.content.ctext -row 0 -column 0 -sticky nsew
+    grid $win.content.vsb   -row 0 -column 1 -sticky ns
+    grid $win.content.hsb   -row 1 -column 0 -sticky ew
     grid rowconfigure    $win.content 0 -weight 1
-    grid columnconfigure $win.content 1 -weight 1
+    grid columnconfigure $win.content 0 -weight 1
 
     ttk::style configure Vertical.TScrollbar   -background $Config(scroll_bg)
     ttk::style configure Horizontal.TScrollbar -background $Config(scroll_bg)
 
-    # === РУЧКА ИЗМЕНЕНИЯ РАЗМЕРА ===
-    frame $win.resize -bg $Config(border) -width 12 -height 12 -cursor sizing
-    place $win.resize -relx 1.0 -rely 1.0 -anchor se -y -22
-    raise $win.resize
+    frame $win.resize -bg $Config(border) -width 16 -height 13 -cursor sizing
 
-    # === СТРОКА СОСТОЯНИЯ ===
     frame $win.statusbar -bg $Config(titlebar_bg) -height 22
     grid $win.statusbar -row 2 -column 0 -sticky ew
 
-    label $win.statusbar.lines -text "Col 1" \
+    label $win.statusbar.lines -text "Ln 1, Col 1" \
         -bg $Config(titlebar_bg) -fg $Config(status_fg) \
-        -font {Helvetica 9} -anchor w
+        -font $Config(ui_font) -anchor w
     pack $win.statusbar.lines -side left -padx 8
+
+    label $win.statusbar.lang -text "" \
+        -bg $Config(titlebar_bg) -fg $Config(status_fg) \
+        -font $Config(ui_font) -anchor e
+    pack $win.statusbar.lang -side right -padx 8
 
     label $win.statusbar.info -text "" \
         -bg $Config(titlebar_bg) -fg $Config(status_fg) \
-        -font {Helvetica 9} -anchor e
+        -font $Config(ui_font) -anchor e
     pack $win.statusbar.info -side right -padx 8
 
-    # === ПАНЕЛЬ ПОИСКА/ЗАМЕНЫ (скрыта по умолчанию) ===
-    # Компактная grid-раскладка: поля ввода растягиваются,
-    # кнопки имеют фиксированный размер. При изменении размера
-    # окна панель просто сжимается/расширяется вместе с ним.
     frame $win.findbar -bg $Config(toolbar_bg) -height 26
     grid columnconfigure $win.findbar 0 -weight 1 -minsize 30
     grid columnconfigure $win.findbar 1 -weight 1 -minsize 30
 
-    # Поле поиска
     entry $win.findbar.find -textvariable ::FindPattern \
-        -bg $Config(window_bg) -fg $Config(fg) -font {Helvetica 11} \
+        -bg $Config(window_bg) -fg $Config(fg) -font $Config(ui_font) \
         -highlightthickness 1 -highlightcolor $Config(accent)
     grid $win.findbar.find -row 0 -column 0 -sticky ew -padx 2 -pady 2
 
-    # Поле замены
     entry $win.findbar.replace -textvariable ::ReplacePattern \
-        -bg $Config(window_bg) -fg $Config(fg) -font {Helvetica 11} \
+        -bg $Config(window_bg) -fg $Config(fg) -font $Config(ui_font) \
         -highlightthickness 1 -highlightcolor $Config(accent)
     grid $win.findbar.replace -row 0 -column 1 -sticky ew -padx 2 -pady 2
 
-    # Генерация кнопок панели поиска из массива конфигурации.
-    # Каждая запись: {имя ширина текст команда}
+    MakeFlatButton $win.findbar btn_case 26 22 "Aa" \
+        $Config(ui_font) $Config(toolbar_bg) $Config(fg) \
+        $Config(btn_hover_bg) $Config(hover_fg) ToggleFindCase \
+        [list -row 0 -column 2 -padx 1 -pady 2]
+    StyleCaseButton $win.findbar.btn_case
+
     set findbarButtons {
         {prev   26 "<"     FindPrevInBuffer}
         {next   26 ">"     FindNextInBuffer}
@@ -320,171 +459,107 @@ proc CreateWindow {id} {
         {all    30 "ReAll" ReplaceAllInBuffer}
         {close  22 "x"     HideFindBar}
     }
-    set col 2
+    set col 3
     foreach btn $findbarButtons {
         lassign $btn bname bwidth btext bcmd
 
-        # Кнопка «закрыть» имеет красный цвет текста и красный hover
         if {$bname eq "close"} {
             set btnFg $Config(close_hover)
-            set btnHoverFg "#ff4444"
+            set btnHoverFg $Config(close_hover)
         } else {
             set btnFg $Config(fg)
             set btnHoverFg $Config(hover_fg)
         }
 
         MakeFlatButton $win.findbar btn_$bname $bwidth 22 $btext \
-            {Helvetica 9} $Config(toolbar_bg) $btnFg \
+            $Config(ui_font) $Config(toolbar_bg) $btnFg \
             $Config(btn_hover_bg) $btnHoverFg [list $bcmd $id] \
             [list -row 0 -column $col -padx 1 -pady 2]
 
         incr col
     }
 
-    # Горячие клавиши внутри панели поиска
     bind $win.findbar.find    <Return>  [list FindNextInBuffer $id]
     bind $win.findbar.replace <Return>  [list ReplaceInBuffer $id]
     bind $win.findbar         <Escape>  [list HideFindBar $id]
 
-    # Настройка растяжения основного окна
     grid rowconfigure    $win 1 -weight 1
     grid columnconfigure $win 0 -weight 1
 
-    # === ПРИВЯЗКА СОБЫТИЙ ===
+    bind $win.content.ctext <KeyRelease>      +[list UpdateLineCounter $id]
+    bind $win.content.ctext <ButtonRelease-1> +[list UpdateLineCounter $id]
+    bind $win.content.ctext <<Modified>>      +[list OnTextChange $id]
 
-    # Обновление счётчика строк при вводе и клике мышью
-    bind $win.content.text <KeyRelease> [list UpdateLineCounter $id]
-    bind $win.content.text <ButtonRelease-1> [list UpdateLineCounter $id]
-
-    # Первоначальное размещение окна на рабочем столе
     place $win -x $x -y $y -width 500 -height 350
+    PlaceResizeHandle $id
     raise $win
-    set ::ZIndex [expr {$::ZIndex + 1}]
+    incr ::ZIndex
 
-    # --- Перетаскивание окна ---
-    # Привязываемся к фону заголовка и метке, НО НЕ к кнопкам.
-    bind $win.titlebar       <ButtonPress-1> [list StartDrag %W %X %Y $id]
-    bind $win.titlebar       <B1-Motion>     [list OnDrag %W %X %Y $id]
-    bind $win.titlebar       <Double-Button-1> [list ToggleMaximize $id]
+    bind $win.titlebar <ButtonPress-1>   [list StartDrag %W %X %Y $id]
+    bind $win.titlebar <B1-Motion>       [list OnDrag %W %X %Y $id]
+    bind $win.titlebar <Double-Button-1> [list ToggleMaximize $id]
 
-    bind $win.titlebar.label <ButtonPress-1> [list StartDrag %W %X %Y $id]
-    bind $win.titlebar.label <B1-Motion>     [list OnDrag %W %X %Y $id]
+    bind $win.titlebar.label <ButtonPress-1>   [list StartDrag %W %X %Y $id]
+    bind $win.titlebar.label <B1-Motion>       [list OnDrag %W %X %Y $id]
     bind $win.titlebar.label <Double-Button-1> [list ToggleMaximize $id]
 
-    # --- Изменение размера ---
     bind $win.resize <ButtonPress-1> [list StartResize %W %X %Y $id]
     bind $win.resize <B1-Motion>     [list OnResize %W %X %Y $id]
 
-    # --- Фокус и изменение текста ---
-    bind $win.content.text <FocusIn>   [list SetActiveBuffer $id]
-    bind $win.content.text <KeyRelease> +[list OnTextChange $id]
+    bind $win               <Button-1> [list ActivateWindow $id]
+    bind $win.content.ctext <Button-1> +[list ActivateWindow $id]
 
-    # --- Поднятие окна на передний план по клику ---
-    bind $win              <Button-1> [list RaiseWindow $id]
-    bind $win.content.text <Button-1> [list RaiseWindow $id]
+    bind $win.content.ctext <Control-s>     [list SaveBuffer $id]
+    bind $win.content.ctext <Control-w>     [list CloseBuffer $id]
+    bind $win.content.ctext <Control-f>     [list ShowFindBar $id]
+    bind $win.content.ctext <Control-g>     [list GotoLineInBuffer $id]
+    bind $win.content.ctext <Control-l>     [list SelectCurrentLine $id]
+    bind $win.content.ctext <Control-slash> [list ToggleComment $id]
+    bind $win.content.ctext <Return>        [list IndentOnReturn $id]
+    bind $win.content.ctext <Tab>           [list IndentBuffer $id 1]
+    bind $win.content.ctext <ISO_Left_Tab>  [list IndentBuffer $id -1]
+    bind $win.content.ctext <Shift-Tab>     [list IndentBuffer $id -1]
+    bind $win.content.ctext <Escape>        [list HideFindBar $id]
+    bind $win.content.ctext <Control-Tab>   {CycleBuffer 1; break}
+    bind $win.content.ctext <Control-Shift-Tab> {CycleBuffer -1; break}
 
-    # --- Горячие клавиши буфера ---
-    bind $win.content.text <Control-s> [list SaveBuffer $id]
-    bind $win.content.text <Control-w> [list CloseBuffer $id]
-    bind $win.content.text <Control-o> OpenFile
-    bind $win.content.text <Control-n> NewBuffer
-    bind $win.content.text <Control-f> OpenFindDialog
-
-    # Если буфер создан из файла — вставляем сохранённое содержимое
     if {$Buffers($id,content) ne ""} {
-        $win.content.text insert 1.0 $Buffers($id,content)
+        $win.content.ctext fastinsert 1.0 $Buffers($id,content)
+        $win.content.ctext edit modified 0
     }
+    ApplySyntaxForBuffer $id
 
-    focus $win.content.text
-    RaiseWindow $id
+    focus $win.content.ctext
+    ActivateWindow $id
     UpdateLineCounter $id
-    UpdateLineNumbers $id
 }
 
-# --- SyncScroll ---
-# Callback для синхронизации вертикальной прокрутки:
-# обновляет положение scrollbar и перерисовывает номера строк.
-proc SyncScroll {id args} {
+# --- Window chrome --------------------------------------------------------
+
+# Status bar: cursor position, line ratio, and language id.
+proc UpdateLineCounter {id} {
     global Buffers
     if {![SafeWindowExists $id]} return
 
     set win $Buffers($id,window)
-    # Передаём аргументы scrollbar'у
-    eval [list $win.content.vsb set] $args
-    # Перерисовываем номера строк
-    UpdateLineNumbers $id
-}
+    set ctextWidget $win.content.ctext
 
-# --- UpdateLineNumbers ---
-# Перерисовывает номера видимых строк в левом canvas.
-# Определяет диапазон видимых строк через dlineinfo и
-# вычисляет смещение Y для точного совпадения с текстом.
-proc UpdateLineNumbers {id} {
-    global Buffers Config
-    if {![SafeWindowExists $id]} return
-
-    set win $Buffers($id,window)
-    set textWidget $win.content.text
-    set lineCanvas $win.content.linenum
-
-    $lineCanvas delete all
-
-    # Получаем индексы первой и последней видимой строки
-    set top    [$textWidget index @0,0]
-    set bottom [$textWidget index @0,[winfo height $textWidget]]
-    set firstLine [expr {int([lindex [split $top "."] 0])}]
-    set lastLine  [expr {int([lindex [split $bottom "."] 0])}]
-
-    # Высота одной строки в пикселях
-    set lineHeight [font metrics $Config(font) -linespace]
-
-    # Вычисляем вертикальное смещение первой видимой строки
-    set bbox [$textWidget dlineinfo $firstLine.0]
-    if {$bbox eq ""} { set bbox [$textWidget dlineinfo 1.0] }
-    if {$bbox ne ""} {
-        set yOffset [lindex $bbox 1]
-    } else {
-        set yOffset 4
-    }
-
-    # Рисуем номера строк
-    for {set line $firstLine} {$line <= $lastLine} {incr line} {
-        set y [expr {$yOffset + ($line - $firstLine) * $lineHeight + $lineHeight / 2}]
-        $lineCanvas create text 46 $y -text $line \
-            -fill $Config(linenum_fg) -font $Config(linenum_font) -anchor e
-    }
-
-    # Автоматически подстраиваем ширину canvas под количество цифр
-    set totalLines [lindex [split [$textWidget index end] "."] 0]
-    set digits [string length $totalLines]
-    set newWidth [expr {max(50, $digits * 10 + 20)}]
-    $lineCanvas configure -width $newWidth
-}
-
-# --- UpdateLineCounter ---
-# Обновляет метки в строке состояния: текущая позиция курсора
-# и соотношение "текущая_строка:всего_строк".
-proc UpdateLineCounter {id} {
-    global Buffers Config
-    if {![SafeWindowExists $id]} return
-
-    set win $Buffers($id,window)
-    set textWidget $win.content.text
-
-    set insertIdx   [$textWidget index insert]
+    set insertIdx   [$ctextWidget index insert]
     set currentLine [lindex [split $insertIdx "."] 0]
     set currentCol  [expr {[lindex [split $insertIdx "."] 1] + 1}]
-    set totalLines  [lindex [split [$textWidget index end] "."] 0]
+    set totalLines  [lindex [split [$ctextWidget index end-1c] "."] 0]
 
-    $win.statusbar.lines configure -text "Col $currentCol"
+    $win.statusbar.lines configure -text "Ln $currentLine, Col $currentCol"
     $win.statusbar.info  configure -text "$currentLine:$totalLines"
 
-    UpdateLineNumbers $id
+    set lang ""
+    if {[info exists Buffers($id,lang)] && $Buffers($id,lang) ne ""} {
+        set lang $Buffers($id,lang)
+    }
+    $win.statusbar.lang configure -text $lang
 }
 
-# --- MinimizeWindow ---
-# Сворачивает/разворачивает окно буфера, скрывая всё содержимое
-# и оставляя только заголовок высотой 28 пикселей.
+# Collapse the window to a title bar, or restore content and height.
 proc MinimizeWindow {id} {
     global Buffers
     if {![SafeWindowExists $id]} return
@@ -492,7 +567,7 @@ proc MinimizeWindow {id} {
     set win $Buffers($id,window)
 
     if {[info exists Buffers($id,visible)] && $Buffers($id,visible)} {
-        # Свернуть: скрываем content, statusbar, findbar и ручку
+        set Buffers($id,rest_h) [winfo height $win]
         grid forget $win.content
         grid forget $win.statusbar
         grid forget $win.findbar
@@ -500,62 +575,62 @@ proc MinimizeWindow {id} {
         place $win -height 28
         set Buffers($id,visible) 0
     } else {
-        # Развернуть: восстанавливаем всё
-        grid $win.content    -row 1 -column 0 -sticky nsew
-        grid $win.statusbar  -row 2 -column 0 -sticky ew
-        # findbar остаётся скрытой, пока не вызвана явно
-        place $win.resize -relx 1.0 -rely 1.0 -anchor se -y -22
-        raise $win.resize
-        place $win -height 350
+        grid $win.content   -row 1 -column 0 -sticky nsew
+        grid $win.statusbar -row 2 -column 0 -sticky ew
+        if {[info exists Buffers($id,findbar)] && $Buffers($id,findbar)} {
+            grid $win.findbar -row 3 -column 0 -sticky ew
+        }
+        set h 350
+        if {[info exists Buffers($id,rest_h)]} {
+            set h $Buffers($id,rest_h)
+        }
+        place $win -height $h
+        PlaceResizeHandle $id
         set Buffers($id,visible) 1
     }
     UpdateBufferList
 }
 
-# --- RaiseWindow ---
-# Поднимает окно буфера на передний план, увеличивая глобальный ZIndex.
+# Raise the buffer window.
 proc RaiseWindow {id} {
     global ZIndex Buffers
     incr ZIndex
     if {[SafeWindowExists $id]} {
         raise $Buffers($id,window)
+        PlaceResizeHandle $id
     }
 }
 
-# --- SetActiveBuffer ---
-# Делает буфер активным: обновляет глобальную переменную,
-# перекрашивает список в боковой панели и перемещает фокус.
+# Raise the window and mark the buffer active (sidebar, Save, Find).
+proc ActivateWindow {id} {
+    RaiseWindow $id
+    SetActiveBuffer $id
+}
+
+# Remember the active buffer. Does not steal focus from the findbar.
 proc SetActiveBuffer {id} {
-    global ActiveBufferId Buffers
+    global ActiveBufferId
     set ActiveBufferId $id
     UpdateBufferList
     UpdateStatus
-    if {[SafeWindowExists $id]} {
-        focus $Buffers($id,window).content.text
-    }
 }
 
-# --- OnTextChange ---
-# Отслеживает изменения текста, сравнивая текущее содержимое
-# виджета с сохранённым. Устанавливает/сбрасывает флаг modified.
+# <<Modified>> handler: dirty flag, title asterisk, sidebar, cursor.
 proc OnTextChange {id} {
     global Buffers
     if {![SafeWindowExists $id]} return
 
     set win $Buffers($id,window)
-    set current [$win.content.text get 1.0 end-1c]
-    set saved   $Buffers($id,content)
+    set Buffers($id,modified) [$win.content.ctext edit modified]
 
-    set Buffers($id,modified) [expr {$current ne $saved}]
     UpdateWindowTitle $id
     UpdateBufferList
     UpdateLineCounter $id
 }
 
-# --- UpdateWindowTitle ---
-# Обновляет текст заголовка окна: добавляет «*» если есть несохранённые изменения.
+# Titlebar text: file name plus " *" when dirty.
 proc UpdateWindowTitle {id} {
-    global Buffers Config
+    global Buffers
     if {![SafeWindowExists $id]} return
 
     set win $Buffers($id,window)
@@ -564,10 +639,7 @@ proc UpdateWindowTitle {id} {
     $win.titlebar.label configure -text $title
 }
 
-# --- UpdateBufferList ---
-# Перестраивает список буферов в боковой панели.
-# Для каждого буфера показывает имя, маркер изменений «*»
-# и маркер свёрнутости «(min)». Активный буфер выделяется цветом.
+# Rebuild the sidebar listbox in AllBufferIds order.
 proc UpdateBufferList {} {
     global Buffers ActiveBufferId SidebarList Config
 
@@ -589,31 +661,38 @@ proc UpdateBufferList {} {
     }
 }
 
-# --- ActivateBufferByName ---
-# Активирует буфер по имени из списка боковой панели.
-# Убирает суффиксы « (min)» и « *» перед поиском.
-proc ActivateBufferByName {name} {
+# Activate by listbox row index (names may collide).
+proc ActivateBufferByIndex {idx} {
     global Buffers
-    set name [string trimright $name " (min)"]
-    set name [string trimright $name " *"]
-    foreach key [array names Buffers *,name] {
-        if {$Buffers($key) eq $name} {
-            set id [lindex [split $key ","] 0]
-            if {[SafeWindowExists $id]} {
-                raise $Buffers($id,window)
-                SetActiveBuffer $id
-            }
-            break
-        }
+    set ids [AllBufferIds]
+    if {$idx < 0 || $idx >= [llength $ids]} return
+    set id [lindex $ids $idx]
+    ActivateWindow $id
+    if {![SafeWindowExists $id]} return
+    set win $Buffers($id,window)
+    if {[info exists Buffers($id,findbar)] && $Buffers($id,findbar)} {
+        focus $win.findbar.find
+    } else {
+        focus $win.content.ctext
     }
 }
 
-# --- UpdateStatus ---
-# Обновляет текст статуса в тулбаре: показывает путь к файлу
-# активного буфера или его имя, если путь не задан.
+# Walk the buffer list; dir is +1 or -1.
+proc CycleBuffer {dir} {
+    global ActiveBufferId
+    set ids [AllBufferIds]
+    set n [llength $ids]
+    if {$n == 0} return
+    set i [lsearch -exact $ids $ActiveBufferId]
+    if {$i < 0} { set i 0 }
+    set i [expr {($i + $dir) % $n}]
+    ActivateBufferByIndex $i
+}
+
+# Toolbar status: path or buffer name.
 proc UpdateStatus {} {
-    global ActiveBufferId Buffers StatusLabel Config
-    if {$ActiveBufferId eq ""} {
+    global ActiveBufferId Buffers StatusLabel
+    if {$ActiveBufferId eq "" || ![info exists Buffers($ActiveBufferId,name)]} {
         $StatusLabel configure -text "Ready"
     } else {
         set path $Buffers($ActiveBufferId,path)
@@ -625,14 +704,9 @@ proc UpdateStatus {} {
     }
 }
 
-# ============================================================================
-# ПЕРЕТАСКИВАНИЕ И ИЗМЕНЕНИЕ РАЗМЕРА ОКОН
-# ============================================================================
+# --- Drag and resize ------------------------------------------------------
 
-# --- StartDrag / OnDrag ---
-# Реализация drag-and-drop для перемещения окон.
-# Запоминаем начальную позицию мыши и смещаем окно
-# на разницу между текущей и начальной позицией.
+# Record the grab point for titlebar dragging.
 proc StartDrag {widget x y id} {
     global DragStart DragWin
     set DragWin [winfo parent $widget]
@@ -641,11 +715,12 @@ proc StartDrag {widget x y id} {
     }
     set DragStart(x) $x
     set DragStart(y) $y
-    RaiseWindow $id
+    ActivateWindow $id
 }
 
+# Move the window by the mouse delta; Y stays >= 1.
 proc OnDrag {widget x y id} {
-    global DragStart DragWin
+    global DragStart DragWin Buffers
     if {![info exists DragWin]} return
     if {![winfo exists $DragWin]} return
 
@@ -656,11 +731,10 @@ proc OnDrag {widget x y id} {
     place $DragWin -x $newX -y $newY
     set DragStart(x) $x
     set DragStart(y) $y
+    set Buffers($id,maximized) 0
 }
 
-# --- StartResize / OnResize ---
-# Реализация изменения размера окна за нижний-правый угол.
-# Минимальный размер фиксирован: 200×150 пикселей.
+# Snapshot size when the resize grip is pressed.
 proc StartResize {widget x y id} {
     global ResizeStart ResizeWin
     set ResizeWin [winfo parent $widget]
@@ -668,10 +742,12 @@ proc StartResize {widget x y id} {
     set ResizeStart(y) $y
     set ResizeStart(w) [winfo width $ResizeWin]
     set ResizeStart(h) [winfo height $ResizeWin]
+    ActivateWindow $id
 }
 
+# Resize; minimum 200×150.
 proc OnResize {widget x y id} {
-    global ResizeStart ResizeWin
+    global ResizeStart ResizeWin Buffers
     if {![info exists ResizeWin]} return
     if {![winfo exists $ResizeWin]} return
 
@@ -681,63 +757,66 @@ proc OnResize {widget x y id} {
     set newW [expr {max(200, $ResizeStart(w) + $dx)}]
     set newH [expr {max(150, $ResizeStart(h) + $dy)}]
     place $ResizeWin -width $newW -height $newH
+    set Buffers($id,maximized) 0
 }
 
-# ============================================================================
-# РАЗВЁРТЫВАНИЕ НА ВЕСЬ ЭКРАН
-# ============================================================================
-
-# --- ToggleMaximize ---
-# Переключает окно между обычным размером (500×350) и полноэкранным
-# (размер рабочего стола). Состояние хранится в Buffers($id,maximized).
+# Fill the desktop (with gutter) or restore the saved geometry.
 proc ToggleMaximize {id} {
-    global Buffers Desktop
+    global Buffers
     if {![SafeWindowExists $id]} return
 
     set win $Buffers($id,window)
 
     if {[info exists Buffers($id,maximized)] && $Buffers($id,maximized)} {
-        # Восстановить обычный размер
-        place $win -x 20 -y 20 -width 500 -height 350
+        set x 20
+        set y 20
+        set w 500
+        set h 350
+        if {[info exists Buffers($id,rest_x)]} {
+            set x $Buffers($id,rest_x)
+            set y $Buffers($id,rest_y)
+            set w $Buffers($id,rest_w)
+            set h $Buffers($id,rest_h)
+        }
+        place $win -x $x -y $y -width $w -height $h
         set Buffers($id,maximized) 0
     } else {
-        # Развернуть на весь рабочий стол
-        set dw [winfo width $Desktop]
-        set dh [winfo height $Desktop]
-        place $win -x 0 -y 0 -width $dw -height $dh
+        set Buffers($id,rest_x) [winfo x $win]
+        set Buffers($id,rest_y) [winfo y $win]
+        set Buffers($id,rest_w) [winfo width $win]
+        set Buffers($id,rest_h) [winfo height $win]
+        lassign [MaximizedGeom] mx my mw mh
+        place $win -x $mx -y $my -width $mw -height $mh
         set Buffers($id,maximized) 1
     }
+    PlaceResizeHandle $id
 }
 
-# ============================================================================
-# ФАЙЛОВЫЕ ОПЕРАЦИИ
-# ============================================================================
+# --- Files ----------------------------------------------------------------
 
-# --- OpenFile ---
-# Открывает диалог выбора файла. Если файл уже открыт — активирует
-# его буфер. Иначе создаёт новый буфер и загружает содержимое.
+# Open-file dialog; an already-open path is only activated.
 proc OpenFile {} {
-    global Buffers NextBufferId
+    global Buffers
 
     set types {
-        {{Text Files} {.txt}}
-        {{All Files} *}
+        {{Tcl Files}   {.tcl .tk}}
+        {{C Files}     {.c .h .cpp .cc}}
+        {{Shell Files} {.sh .bash}}
+        {{Text Files}  {.txt}}
+        {{All Files}   *}
     }
 
     set filename [tk_getOpenFile -filetypes $types -title "Open File"]
     if {$filename eq ""} return
 
-    # Проверяем, не открыт ли уже этот файл
     foreach key [array names Buffers *,path] {
         if {$Buffers($key) eq $filename} {
             set id [lindex [split $key ","] 0]
-            RaiseWindow $id
-            SetActiveBuffer $id
+            ActivateWindow $id
             return
         }
     }
 
-    # Читаем файл в кодировке UTF-8
     if {[catch {
         set fh [open $filename r]
         fconfigure $fh -encoding utf-8
@@ -748,26 +827,10 @@ proc OpenFile {} {
         return
     }
 
-    # Создаём буфер из файла
-    incr NextBufferId
-    set id $NextBufferId
-    set name [file tail $filename]
-
-    set Buffers($id,id)       $id
-    set Buffers($id,name)     $name
-    set Buffers($id,path)     $filename
-    set Buffers($id,content)  $content
-    set Buffers($id,modified) 0
-    set Buffers($id,visible)  1
-
-    CreateWindow $id
-    UpdateBufferList
-    SetActiveBuffer $id
+    CreateBuffer [file tail $filename] $filename $content
 }
 
-# --- SaveBuffer ---
-# Сохраняет содержимое буфера по известному пути.
-# Если путь не задан (новый файл) — вызывает SaveAsBuffer.
+# Write the buffer to disk; path-less buffers go through Save As.
 proc SaveBuffer {id} {
     global Buffers
     if {![SafeWindowExists $id]} return
@@ -778,7 +841,7 @@ proc SaveBuffer {id} {
     }
 
     set win $Buffers($id,window)
-    set content [$win.content.text get 1.0 end-1c]
+    set content [$win.content.ctext get 1.0 end-1c]
 
     if {[catch {
         set fh [open $Buffers($id,path) w]
@@ -792,20 +855,25 @@ proc SaveBuffer {id} {
 
     set Buffers($id,content)  $content
     set Buffers($id,modified) 0
+
+    $win.content.ctext edit modified 0
+    ApplySyntaxForBuffer $id
     UpdateWindowTitle $id
     UpdateBufferList
     UpdateStatus
 }
 
-# --- SaveAsBuffer ---
-# Открывает диалог «Сохранить как», обновляет путь и имя буфера,
-# затем делегирует непосредственное сохранение SaveBuffer.
+# Save-As dialog, then SaveBuffer.
 proc SaveAsBuffer {id} {
     global Buffers
+    if {![info exists Buffers($id,id)]} return
 
     set types {
-        {{Text Files} {.txt}}
-        {{All Files} *}
+        {{Tcl Files}   {.tcl}}
+        {{C Files}     {.c .h}}
+        {{Shell Files} {.sh}}
+        {{Text Files}  {.txt}}
+        {{All Files}   *}
     }
 
     set filename [tk_getSaveFile -filetypes $types -title "Save As"]
@@ -817,10 +885,7 @@ proc SaveAsBuffer {id} {
     SaveBuffer $id
 }
 
-# --- CloseBuffer ---
-# Закрывает буфер. Если есть несохранённые изменения — спрашивает
-# пользователя (Yes/No/Cancel). После закрытия активирует другой
-# буфер или очищает статус, если буферов больше нет.
+# Close the buffer. A cancelled Save As or write error keeps the window.
 proc CloseBuffer {id} {
     global Buffers ActiveBufferId
 
@@ -829,6 +894,9 @@ proc CloseBuffer {id} {
             -message "Save changes to $Buffers($id,name)?"]
         if {$answer eq "yes"} {
             SaveBuffer $id
+            if {[info exists Buffers($id,modified)] && $Buffers($id,modified)} {
+                return
+            }
         } elseif {$answer eq "cancel"} {
             return
         }
@@ -838,14 +906,13 @@ proc CloseBuffer {id} {
         destroy $Buffers($id,window)
     }
 
-    # Удаляем все поля буфера из глобального массива
     foreach key [array names Buffers $id,*] {
         unset Buffers($key)
     }
 
     set ids [AllBufferIds]
     if {[llength $ids] > 0} {
-        SetActiveBuffer [lindex $ids 0]
+        ActivateBufferByIndex 0
     } else {
         set ActiveBufferId ""
         UpdateStatus
@@ -854,139 +921,124 @@ proc CloseBuffer {id} {
     UpdateBufferList
 }
 
-# ============================================================================
-# БОКОВАЯ ПАНЕЛЬ
-# ============================================================================
+# --- Main window ----------------------------------------------------------
 
-# --- ToggleSidebar ---
-# Показывает/скрывает боковую панель, переключая geometry
-# рабочего стола между полной шириной и смещением на 180 пикселей.
-# Также обновляет размер всех развёрнутых окон.
+# Show or hide the sidebar and relayout maximized windows.
 proc ToggleSidebar {} {
-    global SidebarVisible Config Desktop
+    global SidebarVisible
 
-    if {$SidebarVisible} {
-        # Скрыть: рабочий стол занимает всю ширину
-        place forget .sidebar
-        place .desktop -x 0 -y 32 -relwidth 1 -width 0 -relheight 1 -height -32
-        set SidebarVisible 0
-    } else {
-        # Показать: рабочий стол смещается вправо на 180px
-        place .sidebar -x 0 -y 32 -width 180 -relheight 1 -height -32
-        place .desktop -x 180 -y 32 -relwidth 1 -width -180 -relheight 1 -height -32
-        set SidebarVisible 1
-    }
-
+    set SidebarVisible [expr {!$SidebarVisible}]
+    PlaceDesktop
     update idletasks
+    RelayoutMaximized
+}
 
-    # Обновляем размер развёрнутых окон под новый размер рабочего стола
-    set dw [winfo width .desktop]
-    set dh [winfo height .desktop]
-    foreach key [array names ::Buffers *,maximized] {
-        if {$::Buffers($key)} {
+# Stretch maximized buffers to the current desktop size (with gutter).
+proc RelayoutMaximized {} {
+    global Buffers Desktop
+    if {![winfo exists $Desktop]} return
+
+    lassign [MaximizedGeom] mx my mw mh
+    foreach key [array names Buffers *,maximized] {
+        if {$Buffers($key)} {
             set id [lindex [split $key ","] 0]
-            set win $::Buffers($id,window)
-            if {[winfo exists $win]} {
-                place $win -x 0 -y 0 -width $dw -height $dh
+            if {[SafeWindowExists $id]} {
+                place $Buffers($id,window) -x $mx -y $my -width $mw -height $mh
+                PlaceResizeHandle $id
             }
         }
     }
 }
 
-# ============================================================================
-# ПОСТРОЕНИЕ ИНТЕРФЕЙСА
-# ============================================================================
-
-# --- BuildUI ---
-# Создаёт главное окно приложения: тулбар, боковую панель,
-# рабочий стол и привязывает глобальные горячие клавиши.
+# Toolbar, sidebar, desktop, and global hotkeys.
 proc BuildUI {} {
-    global Config Desktop SidebarList StatusLabel SidebarVisible
+    global Config Desktop SidebarList StatusLabel Layout
 
-    wm title . "Smalltalk Editor"
-    wm geometry . 1200x800
+    catch {wm title . "Mied"}
+    catch {wm geometry . 1200x800}
     . configure -bg $Config(bg)
 
-    # === ТУЛБАР ===
-    frame .toolbar -bg $Config(toolbar_bg) -height 32
+    # Same 1px $Config(border) rim as buffer windows.
+    frame .toolbar -bg $Config(border) -bd 1 -relief flat -height $Layout(toolbar_h)
     pack .toolbar -fill x -side top
+    frame .toolbar.inner -bg $Config(toolbar_bg)
+    pack .toolbar.inner -fill both -expand 1
 
-    # Генерация кнопок тулбара из массива конфигурации.
-    # Каждая запись: {внутреннее_имя ширина текст команда}
     set toolbarButtons {
-        {sidebar 60 "Buffers"  ToggleSidebar}
         {new     40 "New"      NewBuffer}
         {open    40 "Open"     OpenFile}
         {save    40 "Save"     SaveActiveBuffer}
-        {saveas  55 "Save As"  SaveAsActiveBuffer}
+        {saveas  60 "Save As"  SaveAsActiveBuffer}
+        {sidebar 60 "Buffers"  ToggleSidebar}
     }
     foreach btn $toolbarButtons {
         lassign $btn bname bwidth btext bcmd
         MakeToolbarButton $bname $bwidth $btext $bcmd
     }
 
+    frame .toolbar.inner.spacer -bg $Config(toolbar_bg)
+    pack .toolbar.inner.spacer -side left -expand 1 -fill x
 
-    # Растягивающийся spacer и статусная метка
-    frame .toolbar.spacer -bg $Config(toolbar_bg)
-    pack .toolbar.spacer -side left -expand 1 -fill x
+    label .toolbar.inner.status -text "Ready" -fg $Config(status_fg) \
+        -bg $Config(toolbar_bg) -font $Config(ui_font)
+    pack .toolbar.inner.status -side right -padx 10
+    set StatusLabel .toolbar.inner.status
 
-    label .toolbar.status -text "Ready" -fg $Config(status_fg) \
-        -bg $Config(toolbar_bg) -font {Helvetica 10}
-    pack .toolbar.status -side right -padx 10
-    set StatusLabel .toolbar.status
+    frame .sidebar -bg $Config(border) -bd 1 -relief flat -width $Layout(sidebar_w)
 
-    # === БОКОВАЯ ПАНЕЛЬ ===
-    frame .sidebar -bg $Config(sidebar_bg) -width 180
-    place .sidebar -x 0 -y 32 -width 180 -relheight 1 -height -32
-
-    label .sidebar.header -text "BUFFERS" -fg $Config(header_fg) \
-        -bg $Config(sidebar_bg) -font {Helvetica 9 bold}
-    place .sidebar.header -x 0 -y 0 -width 180 -height 24
+    label .sidebar.header -text "Buffers" -fg $Config(header_fg) \
+        -bg $Config(sidebar_bg) -font $Config(ui_font)
+    place .sidebar.header -x 0 -y 0 -relwidth 1 -height 24
 
     listbox .sidebar.list -bg $Config(sidebar_bg) -fg $Config(list_fg) \
-        -font $Config(font) -bd 0 -highlightthickness 0 \
+        -font $Config(ui_font) -bd 0 -highlightthickness 0 \
         -selectbackground $Config(sel_bg) -selectforeground $Config(sel_fg) \
         -activestyle none -exportselection 0
-    place .sidebar.list -x 0 -y 24 -width 180 -relheight 1 -height -24
+    place .sidebar.list -x 0 -y 24 -relwidth 1 -relheight 1 -height -24
     set SidebarList .sidebar.list
 
-    # Клик по элементу списка активирует соответствующий буфер
     bind .sidebar.list <Button-1> {
         set idx [%W nearest %y]
-        if {$idx >= 0} {
-            set text [%W get $idx]
-            ActivateBufferByName $text
+        set bbox [%W bbox $idx]
+        if {$bbox ne {}} {
+            lassign $bbox bx by bw bh
+            if {%y >= $by && %y < $by + $bh} {
+                ActivateBufferByIndex $idx
+            }
         }
     }
-
-    # === РАБОЧИЙ СТОЛ ===
-    frame .desktop -bg $Config(bg)
-    place .desktop -x 180 -y 32 -relwidth 1 -width -180 -relheight 1 -height -32
-    set Desktop .desktop
-
-    # При изменении размера окна обновляем развёрнутые буферы
-    bind .desktop <Configure> {
-        foreach key [array names ::Buffers *,maximized] {
-            if {$::Buffers($key)} {
-                set id [lindex [split $key ","] 0]
-                set win $::Buffers($id,window)
-                if {[winfo exists $win]} {
-                    place $win -x 0 -y 0 -width [winfo width .desktop] -height [winfo height .desktop]
+    bind .sidebar.list <Double-Button-1> {
+        set idx [%W nearest %y]
+        set bbox [%W bbox $idx]
+        if {$bbox ne {}} {
+            lassign $bbox bx by bw bh
+            if {%y >= $by && %y < $by + $bh} {
+                ActivateBufferByIndex $idx
+                global ActiveBufferId
+                if {$ActiveBufferId ne ""} {
+                    ToggleMaximize $ActiveBufferId
                 }
             }
         }
     }
 
-    # === ГЛОБАЛЬНЫЕ ГОРЯЧИЕ КЛАВИШИ ===
-    bind all <Control-n> NewBuffer
-    bind all <Control-o> OpenFile
-    bind all <Control-s> SaveActiveBuffer
-    bind all <Control-b> ToggleSidebar
-    bind all <Control-f> OpenFindDialog
+    frame .desktop -bg $Config(bg)
+    set Desktop .desktop
+    PlaceDesktop
+
+    bind .desktop <Configure> RelayoutMaximized
+
+    bind . <Control-n> NewBuffer
+    bind . <Control-o> OpenFile
+    bind . <Control-s> SaveActiveBuffer
+    bind . <Control-b> ToggleSidebar
+    bind . <Control-f> OpenFindDialog
+    bind . <Control-g> {GotoLineActive}
+    bind . <Control-Tab> {CycleBuffer 1}
+    bind . <Control-Shift-Tab> {CycleBuffer -1}
 }
 
-# --- SaveActiveBuffer / SaveAsActiveBuffer ---
-# Обертки для сохранения текущего активного буфера.
+# Save the active buffer (toolbar / Ctrl+S).
 proc SaveActiveBuffer {} {
     global ActiveBufferId
     if {$ActiveBufferId ne ""} {
@@ -994,6 +1046,7 @@ proc SaveActiveBuffer {} {
     }
 }
 
+# Save As for the active buffer.
 proc SaveAsActiveBuffer {} {
     global ActiveBufferId
     if {$ActiveBufferId ne ""} {
@@ -1001,148 +1054,181 @@ proc SaveAsActiveBuffer {} {
     }
 }
 
-# ============================================================================
-# ПОИСК И ЗАМЕНА (встроенная панель)
-# ============================================================================
+# Paint the Aa button: filled accent when case-sensitive is on.
+proc StyleCaseButton {path} {
+    global FindCaseSensitive Config
+    if {![winfo exists $path]} return
 
-# --- OpenFindDialog ---
-# Открывает панель поиска для активного буфера.
+    if {$FindCaseSensitive} {
+        set bg $Config(accent)
+        set fg $Config(sel_fg)
+        set hoverBg $Config(accent)
+        set hoverFg $Config(sel_fg)
+    } else {
+        set bg $Config(toolbar_bg)
+        set fg $Config(fg)
+        set hoverBg $Config(btn_hover_bg)
+        set hoverFg $Config(hover_fg)
+    }
+
+    $path configure -bg $bg
+    $path itemconfigure bg -fill $bg
+    $path itemconfigure label -fill $fg
+
+    $path bind hit <Enter> [list apply {{path hoverBg hoverFg} {
+        $path configure -bg $hoverBg
+        $path itemconfigure bg -fill $hoverBg
+        $path itemconfigure label -fill $hoverFg
+    }} $path $hoverBg $hoverFg]
+    $path bind hit <Leave> [list apply {{path bg fg} {
+        $path configure -bg $bg
+        $path itemconfigure bg -fill $bg
+        $path itemconfigure label -fill $fg
+    }} $path $bg $fg]
+}
+
+# Toggle case-sensitive search and refresh every Aa button.
+proc ToggleFindCase {} {
+    global FindCaseSensitive Buffers
+    set FindCaseSensitive [expr {!$FindCaseSensitive}]
+    foreach id [AllBufferIds] {
+        if {[SafeWindowExists $id]} {
+            StyleCaseButton $Buffers($id,window).findbar.btn_case
+        }
+    }
+}
+
+# --- Find / replace -------------------------------------------------------
+
+# Ctrl+F: show the find bar on the active window.
 proc OpenFindDialog {} {
     global ActiveBufferId
     if {$ActiveBufferId eq ""} return
-    if {![SafeWindowExists $ActiveBufferId]} return
     ShowFindBar $ActiveBufferId
 }
 
-# --- ShowFindBar ---
-# Отображает панель поиска над строкой состояния.
-# Сдвигает ручку изменения размера, чтобы она не перекрывала панель.
+# Show the find bar and focus the search field.
 proc ShowFindBar {id} {
-    global Buffers Config
+    global Buffers
     if {![SafeWindowExists $id]} return
 
+    if {[info exists Buffers($id,visible)] && !$Buffers($id,visible)} {
+        MinimizeWindow $id
+    }
+
     set win $Buffers($id,window)
+    set Buffers($id,findbar) 1
     grid $win.findbar -row 3 -column 0 -sticky ew
-    place $win.resize -relx 1.0 -rely 1.0 -anchor se -y -52
-    raise $win.resize
+    PlaceResizeHandle $id
     focus $win.findbar.find
 }
 
-# --- HideFindBar ---
-# Скрывает панель поиска и возвращает ручку изменения размера
-# в исходное положение над строкой состояния.
+# Hide the find bar and clear match tags.
 proc HideFindBar {id} {
     global Buffers
     if {![SafeWindowExists $id]} return
 
     set win $Buffers($id,window)
+    $win.content.ctext tag remove found 1.0 end
     grid forget $win.findbar
-    place $win.resize -relx 1.0 -rely 1.0 -anchor se -y -22
-    focus $win.content.text
+    set Buffers($id,findbar) 0
+    PlaceResizeHandle $id
+    focus $win.content.ctext
 }
 
-# --- FindInBuffer ---
-# Универсальная процедура поиска, используемая и для «Найти далее»,
-# и для «Найти назад». Параметр direction задаёт направление:
-#   "forwards"  — искать вперёд от startIdx
-#   "backwards" — искать назад от startIdx
-#
-# Возвращает пару {index length} или пустую строку, если не найдено.
+# Search from startIdx; wrap to start/end on miss. Returns {index length} or {{} 0}.
 proc FindInBuffer {id direction startIdx} {
     global FindPattern FindCaseSensitive Buffers
-    if {![SafeWindowExists $id]} return ""
+    if {![SafeWindowExists $id]} { return [list "" 0] }
 
-    set text $Buffers($id,window).content.text
-    if {$FindPattern eq ""} return ""
+    set ctext $Buffers($id,window).content.ctext
+    if {$FindPattern eq ""} { return [list "" 0] }
 
+    set length 0
     set switches [list -count length -$direction]
     if {!$FindCaseSensitive} { lappend switches -nocase }
 
-    set idx [$text search {*}$switches -- $FindPattern $startIdx]
-
-    # Wrap-around: если не нашли, ищем с противоположного конца
+    set idx [$ctext search {*}$switches -- $FindPattern $startIdx]
     if {$idx eq ""} {
         if {$direction eq "forwards"} {
-            set idx [$text search {*}$switches -- $FindPattern 1.0]
+            set idx [$ctext search {*}$switches -- $FindPattern 1.0]
         } else {
-            set idx [$text search {*}$switches -- $FindPattern end]
+            set idx [$ctext search {*}$switches -- $FindPattern end]
         }
     }
 
+    if {$idx eq ""} {
+        return [list "" 0]
+    }
     return [list $idx $length]
 }
 
-# --- FindNextInBuffer ---
-# Находит следующее вхождение шаблона после текущего выделения
-# (или после курсора, если выделения нет).
+# Next match forward; select it and tag found.
 proc FindNextInBuffer {id} {
     global Buffers
     if {![SafeWindowExists $id]} return
 
-    set text $Buffers($id,window).content.text
+    set ctext $Buffers($id,window).content.ctext
+    $ctext tag remove found 1.0 end
 
-    # Начинаем поиск после текущего выделения, иначе
-    # «Найти далее» будет бесконечно находить ту же позицию.
-    if {[$text tag ranges sel] ne ""} {
-        set startIdx [$text index sel.last]
+    if {[$ctext tag ranges sel] ne ""} {
+        set startIdx [$ctext index sel.last]
     } else {
-        set startIdx [$text index "insert +1 chars"]
+        set startIdx [$ctext index "insert +1 chars"]
     }
 
     lassign [FindInBuffer $id forwards $startIdx] idx len
     if {$idx ne ""} {
-        $text mark set insert $idx
-        $text see $idx
-        $text tag remove sel 1.0 end
-        set endIdx [$text index "$idx + $len chars"]
-        $text tag add sel $idx $endIdx
+        $ctext mark set insert $idx
+        $ctext see $idx
+        $ctext tag remove sel 1.0 end
+        set endIdx [$ctext index "$idx + $len chars"]
+        $ctext tag add sel $idx $endIdx
+        $ctext tag add found $idx $endIdx
     }
 }
 
-# --- FindPrevInBuffer ---
-# Находит предыдущее вхождение шаблона перед текущим выделением
-# (или перед курсором, если выделения нет).
+# Previous match backward.
 proc FindPrevInBuffer {id} {
     global Buffers
     if {![SafeWindowExists $id]} return
 
-    set text $Buffers($id,window).content.text
+    set ctext $Buffers($id,window).content.ctext
+    $ctext tag remove found 1.0 end
 
-    if {[$text tag ranges sel] ne ""} {
-        set startIdx [$text index "sel.first -1 chars"]
+    if {[$ctext tag ranges sel] ne ""} {
+        set startIdx [$ctext index "sel.first -1 chars"]
     } else {
-        set startIdx [$text index "insert -1 chars"]
+        set startIdx [$ctext index "insert -1 chars"]
     }
 
     lassign [FindInBuffer $id backwards $startIdx] idx len
     if {$idx ne ""} {
-        $text mark set insert $idx
-        $text see $idx
-        $text tag remove sel 1.0 end
-        set endIdx [$text index "$idx + $len chars"]
-        $text tag add sel $idx $endIdx
+        $ctext mark set insert $idx
+        $ctext see $idx
+        $ctext tag remove sel 1.0 end
+        set endIdx [$ctext index "$idx + $len chars"]
+        $ctext tag add sel $idx $endIdx
+        $ctext tag add found $idx $endIdx
     }
 }
 
-# --- ReplaceInBuffer ---
-# Заменяет текущее выделение, если оно совпадает с шаблоном поиска,
-# затем переходит к следующему вхождению.
+# Replace the current selection if it is a match, then find the next one.
 proc ReplaceInBuffer {id} {
     global FindPattern ReplacePattern FindCaseSensitive Buffers
     if {![SafeWindowExists $id]} return
 
-    set text $Buffers($id,window).content.text
+    set ctext $Buffers($id,window).content.ctext
     if {$FindPattern eq ""} return
 
-    set selStart [$text index sel.first]
-    set selEnd   [$text index sel.last]
-    if {$selStart eq "" || $selEnd eq ""} {
+    if {[$ctext tag ranges sel] eq ""} {
         FindNextInBuffer $id
         return
     }
 
-    # Проверяем, что выделение действительно совпадает с шаблоном
-    set selected [$text get $selStart $selEnd]
+    set selStart [$ctext index sel.first]
+    set selEnd   [$ctext index sel.last]
+    set selected [$ctext get $selStart $selEnd]
     set pattern $FindPattern
     if {!$FindCaseSensitive} {
         set selected [string tolower $selected]
@@ -1154,19 +1240,18 @@ proc ReplaceInBuffer {id} {
         return
     }
 
-    $text delete $selStart $selEnd
-    $text insert $selStart $ReplacePattern
+    $ctext delete $selStart $selEnd
+    $ctext insert $selStart $ReplacePattern
+    $ctext highlight $selStart "$selStart + [string length $ReplacePattern] chars"
     FindNextInBuffer $id
 }
 
-# --- ReplaceAllInBuffer ---
-# Заменяет ВСЕ вхождения шаблона в буфере. Защита от бесконечного
-# цикла: ограничение в 10 000 замен.
+# Replace every occurrence; stop after 10000 as a safety cap.
 proc ReplaceAllInBuffer {id} {
-    global FindPattern ReplacePattern FindCaseSensitive Buffers
+    global FindPattern FindCaseSensitive Buffers
     if {![SafeWindowExists $id]} return
 
-    set text $Buffers($id,window).content.text
+    set ctext $Buffers($id,window).content.ctext
     if {$FindPattern eq ""} return
 
     set switches [list -count length -forwards]
@@ -1176,24 +1261,191 @@ proc ReplaceAllInBuffer {id} {
     set idx 1.0
 
     while {1} {
-        set found [$text search {*}$switches -- $FindPattern $idx]
+        set found [$ctext search {*}$switches -- $FindPattern $idx]
         if {$found eq ""} break
-        $text delete $found [$text index "$found + $length chars"]
-        $text insert $found $ReplacePattern
-        set idx [$text index "$found + [string length $ReplacePattern] chars"]
+        $ctext delete $found [$ctext index "$found + $length chars"]
+        $ctext insert $found $::ReplacePattern
+        set idx [$ctext index "$found + [string length $::ReplacePattern] chars"]
         incr count
         if {$count > 10000} break
     }
 
     if {$count > 0} {
-        $text tag remove sel 1.0 end
+        $ctext tag remove sel 1.0 end
+        $ctext highlight 1.0 end
     }
 }
 
-# ============================================================================
-# ТОЧКА ВХОДА
-# ============================================================================
+# --- Editing helpers ------------------------------------------------------
+
+# Ctrl+G on the active buffer.
+proc GotoLineActive {} {
+    global ActiveBufferId
+    if {$ActiveBufferId eq ""} return
+    GotoLineInBuffer $ActiveBufferId
+}
+
+# Prompt for a line number and jump there.
+proc GotoLineInBuffer {id} {
+    global Buffers Config
+    if {![SafeWindowExists $id]} return
+
+    set ctext $Buffers($id,window).content.ctext
+    set maxLine [lindex [split [$ctext index end-1c] "."] 0]
+
+    set ::_gotoLine ""
+    catch {destroy .goto}
+    toplevel .goto
+    wm title .goto "Go to line"
+    wm transient .goto .
+    wm resizable .goto 0 0
+    .goto configure -bg $Config(bg)
+
+    label .goto.l -text "Line (1–$maxLine):" -bg $Config(bg) -fg $Config(fg) \
+        -font $Config(ui_font)
+    pack .goto.l -padx 10 -pady {10 4}
+
+    entry .goto.e -textvariable ::_gotoLine -font $Config(ui_font) \
+        -bg $Config(window_bg) -fg $Config(fg) -width 12
+    pack .goto.e -padx 10 -pady 4
+
+    bind .goto.e <Return> {
+        destroy .goto
+    }
+    bind .goto <Escape> {
+        set ::_gotoLine ""
+        destroy .goto
+    }
+
+    focus .goto.e
+    grab .goto
+    tkwait window .goto
+
+    if {![string is integer -strict $::_gotoLine]} return
+    set line $::_gotoLine
+    if {$line < 1} { set line 1 }
+    if {$line > $maxLine} { set line $maxLine }
+    $ctext mark set insert "$line.0"
+    $ctext see insert
+    $ctext tag remove sel 1.0 end
+    $ctext tag add sel "$line.0" "$line.0 lineend"
+    UpdateLineCounter $id
+}
+
+# Select the line that contains the insert cursor (Ctrl+L).
+proc SelectCurrentLine {id} {
+    global Buffers
+    if {![SafeWindowExists $id]} return
+    set ctext $Buffers($id,window).content.ctext
+    $ctext tag remove sel 1.0 end
+    $ctext tag add sel "insert linestart" "insert lineend +1c"
+}
+
+# Copy leading whitespace onto the new line after Return.
+proc IndentOnReturn {id} {
+    global Buffers
+    if {![SafeWindowExists $id]} { return -code break }
+    set ctext $Buffers($id,window).content.ctext
+    set prefix ""
+    regexp {^[[:space:]]*} [$ctext get "insert linestart" insert] prefix
+    $ctext insert insert "\n$prefix"
+    $ctext see insert
+    return -code break
+}
+
+# Tab / Shift-Tab: indent or outdent the selected lines (or the current line).
+proc IndentBuffer {id delta} {
+    global Buffers
+    if {![SafeWindowExists $id]} { return -code break }
+    set ctext $Buffers($id,window).content.ctext
+
+    if {[$ctext tag ranges sel] eq ""} {
+        if {$delta > 0} {
+            $ctext insert insert "\t"
+            return -code break
+        }
+        set first [$ctext index "insert linestart"]
+        set last  [$ctext index "insert lineend"]
+    } else {
+        set first [$ctext index "sel.first linestart"]
+        set last  [$ctext index "sel.last lineend"]
+    }
+
+    set startLine [lindex [split $first "."] 0]
+    set endLine   [lindex [split $last "."] 0]
+    for {set n $startLine} {$n <= $endLine} {incr n} {
+        if {$delta > 0} {
+            $ctext insert $n.0 "\t"
+        } else {
+            set ch [$ctext get $n.0 "$n.0 +1c"]
+            if {$ch eq "\t"} {
+                $ctext delete $n.0 "$n.0 +1c"
+            } elseif {$ch eq " "} {
+                set i 0
+                while {$i < 4 && [$ctext get "$n.0 +$i c"] eq " "} { incr i }
+                if {$i > 0} { $ctext delete $n.0 "$n.0 +$i c" }
+            }
+        }
+    }
+    return -code break
+}
+
+# Toggle a language-appropriate comment on each selected (or current) line.
+proc ToggleComment {id} {
+    global Buffers
+    if {![SafeWindowExists $id]} return
+
+    set ctext $Buffers($id,window).content.ctext
+    set lang ""
+    if {[info exists Buffers($id,lang)]} { set lang $Buffers($id,lang) }
+    set prefix [CommentPrefix $lang]
+    set plen [string length $prefix]
+
+    if {[$ctext tag ranges sel] eq ""} {
+        set first [$ctext index "insert linestart"]
+        set last  [$ctext index "insert lineend"]
+    } else {
+        set first [$ctext index "sel.first linestart"]
+        set last  [$ctext index "sel.last lineend"]
+    }
+
+    set startLine [lindex [split $first "."] 0]
+    set endLine   [lindex [split $last "."] 0]
+
+    set allCommented 1
+    for {set n $startLine} {$n <= $endLine} {incr n} {
+        set line [$ctext get $n.0 "$n.0 lineend"]
+        if {[string trim $line] eq ""} continue
+        set trimmed [string trimleft $line]
+        if {![string equal -length $plen $trimmed $prefix]} {
+            set allCommented 0
+            break
+        }
+    }
+
+    for {set n $startLine} {$n <= $endLine} {incr n} {
+        set line [$ctext get $n.0 "$n.0 lineend"]
+        if {[string trim $line] eq ""} continue
+        if {$allCommented} {
+            set idx [string first $prefix $line]
+            if {$idx >= 0} {
+                $ctext delete $n.$idx "$n.$idx + $plen c"
+                if {[$ctext get $n.$idx] eq " "} {
+                    $ctext delete $n.$idx "$n.$idx +1c"
+                }
+            }
+        } else {
+            regexp -indices {^[[:space:]]*} $line span
+            set col [lindex $span 1]
+            incr col
+            $ctext insert $n.$col "$prefix "
+        }
+    }
+
+    $ctext tag remove sel 1.0 end
+}
+
+# --- Start ----------------------------------------------------------------
 
 BuildUI
 NewBuffer
-focus .desktop
