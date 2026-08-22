@@ -976,6 +976,13 @@ proc RelayoutMaximized {} {
 proc BuildUI {} {
     global Config Desktop SidebarList StatusLabel Layout
 
+    set scriptDir [file dirname [file normalize [info script]]]
+    set iconPath [file join $scriptDir "img/icon.png"]
+    if {[file exists $iconPath]} {
+        image create photo miedIcon -file $iconPath
+        catch {wm iconphoto . -default miedIcon}
+    }
+
     catch {wm title . "Mied"}
     catch {wm geometry . 1200x800}
     . configure -bg $Config(bg)
