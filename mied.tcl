@@ -412,7 +412,7 @@ proc CreateWindow {id} {
     ttk::style configure Vertical.TScrollbar   -background $Config(scroll_bg)
     ttk::style configure Horizontal.TScrollbar -background $Config(scroll_bg)
 
-    frame $win.resize -bg $Config(border) -width 16 -height 13 -cursor sizing
+    frame $win.resize -bg $Config(border) -width 17 -height 15 -cursor sizing
 
     frame $win.statusbar -bg $Config(titlebar_bg) -height 22
     grid $win.statusbar -row 2 -column 0 -sticky ew
@@ -1442,7 +1442,11 @@ proc ToggleComment {id} {
         }
     }
 
-    $ctext tag remove sel 1.0 end
+    # Place cursor at start of first modified line
+    $ctext mark set insert "$startLine.0"
+    $ctext see insert
+
+    return -code break
 }
 
 # --- Start ----------------------------------------------------------------
