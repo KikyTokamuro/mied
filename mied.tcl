@@ -244,7 +244,8 @@ proc DetectLanguage {path content} {
 # Comment prefix used by Ctrl+/.
 proc CommentPrefix {lang} {
     switch -- $lang {
-        c { return "//" }
+        c - go { return "//" }
+        tcl - sh { return "#" }
         default { return "#" }
     }
 }
