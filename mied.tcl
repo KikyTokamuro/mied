@@ -26,6 +26,7 @@
 #
 # Changelog
 #     -          version 0.2.0 Added About window
+#                              Added markdown syntax highlight
 #     2026-08-28 version 0.1.1 fixing PlaceResizeHandle with MinimizeWindow
 #                              fixing ToggleMaximize with MinimizeWindow
 #     2026-08-22 version 0.1
@@ -217,13 +218,14 @@ proc MakeToolbarButton {name width text cmd} {
 
 # --- Syntax highlighting --------------------------------------------------
 
-# Language from extension or shebang: tcl, c, sh, or empty.
+# Language from extension or shebang: tcl, c, sh, markdown, or empty.
 proc DetectLanguage {path content} {
     set ext [string tolower [file extension $path]]
     switch -- $ext {
         .tcl - .tk - .itcl - .tm { return tcl }
         .c - .h - .cpp - .cc - .cxx - .hpp { return c }
         .sh - .bash - .ksh - .zsh { return sh }
+        .md - .markdown - .mdown - .mkdn - .mkd { return markdown }
     }
     set line [string trim [lindex [split $content \n] 0]]
     if {[string match "#!*" $line]} {
@@ -317,10 +319,34 @@ proc ApplySyntaxHighlighting {ctext lang} {
             ::ctext::addHighlightClassForRegexp $ctext comments $cm {#[^\n\r]*}
             ::ctext::addHighlightClassForSpecialChars $ctext punct $pu {[]{}();|}
         }
+        markdown {
+            ::ctext::addHighlightClassForRegexp $ctext headings $kw {^[[:space:]]{0,3}#{1,6}([[:space:]]+|$).*$}
+            ::ctext::addHighlightClassForRegexp $ctext quotes $pu {^[[:space:]]{0,3}(>[[:space:]]*)+}
+            ::ctext::addHighlightClassForRegexp $ctext lists $pu {^[[:space:]]{0,3}([-+*]|[0-9]+\.)[[:space:]]+}
+            ::ctext::addHighlightClassForRegexp $ctext rules $pu {^[[:space:]]{0,3}([-*_][[:space:]]*){3,}$}
+            ::ctext::addHighlightClassForRegexp $ctext tables $pu {^[[:space:]]*\|.*\|[[:space:]]*$}
+            ::ctext::addHighlightClassForRegexp $ctext table_rule $pu {^[[:space:]]*\|?[[:space:]]*:?-+:?[[:space:]]*(\|[[:space:]]*:?-+:?[[:space:]]*)+\|?[[:space:]]*$}
+            ::ctext::addHighlightClassForRegexp $ctext links $st {!?(\[[^\]\n]+\])\([^\)\n]+\)([[:space:]]+"[^"]*")?}
+            ::ctext::addHighlightClassForRegexp $ctext references $st {!?\[[^\]\n]+\][[:space:]]*:[[:space:]]*\S+.*}
+            ::ctext::addHighlightClassForRegexp $ctext code $st {`[^`\n]+`}
+            ::ctext::addHighlightClassForRegexp $ctext emphasis $kw {\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*|_[^_\n]+_|~~[^~\n]+~~}
+            ::ctext::addHighlightClassForRegexp $ctext comments $cm {<!--([^-]|-[^-])*-->}
+            ::ctext::addHighlightClassForRegexp $ctext fences $pp {^[[:space:]]{0,3}(```|~~~)[[:space:]]*[^\n]*$}
+            ::ctext::addHighlightClassForRegexp $ctext html $pu {</?[A-Za-z][^>]*>|<[[:space:]]*![A-Z][^>]*>}
+            ::ctext::addHighlightClassForRegexp $ctext plugins $pu {(^|[[:space:]])(:::[[:space:]]*[^[:space:]]+|\+\+[^+\n]+\+\+|==[^=\n]+==|\^[^^\n]+\^|~[^~\n]+~)([[:space:]]|$)}
+            ::ctext::addHighlightClassForRegexp $ctext footnotes $st {\[\^[^\]]+\]|\[\^[^\]]+\]:.*}
+        }
     }
 
     $ctext tag configure keywords -font $Config(font_bold) -foreground $kw
     $ctext tag configure comments -font $Config(font) -foreground $cm
+
+    if {$lang eq "markdown"} {
+        foreach tag {headings emphasis links code fences tables table_rule quotes lists rules html plugins footnotes references} {
+            $ctext tag configure $tag -foreground $pu
+        }
+    }
+
     $ctext highlight 1.0 end
 }
 
@@ -832,11 +858,12 @@ proc OpenFile {} {
     global Buffers
 
     set types {
-        {{Tcl Files}   {.tcl .tk}}
-        {{C Files}     {.c .h .cpp .cc}}
-        {{Shell Files} {.sh .bash}}
-        {{Text Files}  {.txt}}
-        {{All Files}   *}
+        {{All Files}      *}
+        {{Tcl Files}      {.tcl .tk}}
+        {{C Files}        {.c .h .cpp .cc}}
+        {{Shell Files}    {.sh .bash}}
+        {{Markdown Files} {.md .markdown .mdown .mkdn .mkd}}
+        {{Text Files}     {.txt}}
     }
 
     set filename [tk_getOpenFile -filetypes $types -title "Open File"]
@@ -902,11 +929,12 @@ proc SaveAsBuffer {id} {
     if {![info exists Buffers($id,id)]} return
 
     set types {
-        {{Tcl Files}   {.tcl}}
-        {{C Files}     {.c .h}}
-        {{Shell Files} {.sh}}
-        {{Text Files}  {.txt}}
-        {{All Files}   *}
+        {{All Files}      *}
+        {{Tcl Files}      {.tcl}}
+        {{C Files}        {.c .h}}
+        {{Shell Files}    {.sh}}
+        {{Markdown Files} {.md .markdown .mdown .mkdn .mkd}}
+        {{Text Files}     {.txt}}
     }
 
     set filename [tk_getSaveFile -filetypes $types -title "Save As"]
