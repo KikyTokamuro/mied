@@ -25,8 +25,7 @@
 # SOFTWARE.
 #
 # Changelog
-#                version 0.2.0 Added About window
-#
+#     -          version 0.2.0 Added About window
 #     2026-08-28 version 0.1.1 fixing PlaceResizeHandle with MinimizeWindow
 #                              fixing ToggleMaximize with MinimizeWindow
 #     2026-08-22 version 0.1
@@ -34,7 +33,7 @@
 package require Tk
 package require ctext
 
-set Mied(version) "0.1.1"
+set Mied(version) "0.2.0"
 set Mied(authors) "Daniil Arkhangelsky (Kiky Tokamuro)"
 set Mied(license) "MIT License, 2026"
 
