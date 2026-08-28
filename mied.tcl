@@ -26,7 +26,7 @@
 #
 # Changelog
 #     -          version 0.2.0 Added About window
-#                              Added markdown syntax highlight
+#                              Added Markdown and Go syntax highlight
 #     2026-08-28 version 0.1.1 fixing PlaceResizeHandle with MinimizeWindow
 #                              fixing ToggleMaximize with MinimizeWindow
 #     2026-08-22 version 0.1
@@ -284,10 +284,17 @@ proc ApplySyntaxHighlighting {ctext lang} {
                 ttk::frame ttk::button ttk::entry ttk::label ttk::scrollbar
                 incr append subst regexp regsub scan format clock file
                 cd pwd glob exec pid exit return -code
+                binary lassign lset trace timerate time unknown
+                ::oo::class oo::define oo::objdefine
+            }
+            ::ctext::addHighlightClass $ctext constants $nu {
+                false true tcl_version tcl_patchLevel tcl_library auto_path
+                env argc argv argv0 errorCode errorInfo
             }
             ::ctext::addHighlightClassWithOnlyCharStart $ctext vars $pu "\$"
-            ::ctext::addHighlightClassForSpecialChars $ctext punct $pu {[]{}\\}
+            ::ctext::addHighlightClassForSpecialChars $ctext punct $pu {[]{}\\();}
             ::ctext::addHighlightClassForRegexp $ctext strings $st {"(\\.|[^"\\])*"}
+            ::ctext::addHighlightClassForRegexp $ctext variables $pu {\$\{[^\}]+\}|\$[[:alnum:]_]+|\$[[:alnum:]_]+\([^)]*\)}
             ::ctext::addHighlightClassForRegexp $ctext comments $cm {#[^\n\r]*}
         }
         c {
@@ -297,15 +304,17 @@ proc ApplySyntaxHighlighting {ctext lang} {
                 restrict return short signed sizeof static struct switch
                 typedef union unsigned void volatile while _Bool _Complex
                 _Imaginary include define ifdef ifndef endif pragma undef
-                true false NULL
+                true false NULL EXIT_SUCCESS EXIT_FAILURE
+                stdin stdout stderr va_list size_t ptrdiff_t uint8_t uint16_t
+                uint32_t uint64_t int8_t int16_t int32_t int64_t
             }
-            catch {::ctext::enableComments $ctext}
             ::ctext::addHighlightClassForRegexp $ctext comments $cm {//[^\n\r]*}
-            ::ctext::addHighlightClassForRegexp $ctext preproc $pp {^[[:space:]]*#[[:space:]]*[a-zA-Z]+}
+            ::ctext::addHighlightClassForRegexp $ctext block_comments $cm {/\*([^*]|\*[^/])*\*/}
+            ::ctext::addHighlightClassForRegexp $ctext preproc $pp {^[[:space:]]*#[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]*([[:space:]]+.*)?}
             ::ctext::addHighlightClassForRegexp $ctext strings $st {"(\\.|[^"\\])*"}
-            ::ctext::addHighlightClassForRegexp $ctext chars $st {'(\\.|[^'\\])'}
-            ::ctext::addHighlightClassForRegexp $ctext numbers $nu {\m[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?\M}
-            ::ctext::addHighlightClassForSpecialChars $ctext punct $pu {()[]{};,}
+            ::ctext::addHighlightClassForRegexp $ctext chars $st {'(\\.|[^'\\])*'}
+            ::ctext::addHighlightClassForRegexp $ctext numbers $nu {\m(0[xX][0-9a-fA-F]+([uUlL]*)?|0[bB][01]+([uUlL]*)?|0[0-7]+([uUlL]*)?|[0-9]+(\.[0-9]*)?([eE][-+]?[0-9]+)?[fFlL]?)\M}
+            ::ctext::addHighlightClassForSpecialChars $ctext punct $pu {()[]{};,.:?~!%^&*+=|<>/-}
         }
         go {
             ::ctext::addHighlightClass $ctext keywords $kw {
@@ -323,7 +332,7 @@ proc ApplySyntaxHighlighting {ctext lang} {
             ::ctext::addHighlightClassForRegexp $ctext chars $st {'(\\.|[^'\\])*'}
             ::ctext::addHighlightClassForRegexp $ctext numbers $nu {\m(0[xX][0-9a-fA-F]+|0[bB][01]+|0[oO][0-7]+|[0-9]+(\.[0-9]*)?([eE][-+]?[0-9]+)?i?)\M}
             ::ctext::addHighlightClassForRegexp $ctext directives $pp {^[[:space:]]*//[[:space:]]*go:[^\n\r]*}
-            ::ctext::addHighlightClassForSpecialChars $ctext punct {#777777} {()[]{};,.:=*+-/<>!&|^%~}
+            ::ctext::addHighlightClassForSpecialChars $ctext punct $pu {()[]{};,.:=*+-/<>!&|^%~}
         }
         sh {
             ::ctext::addHighlightClass $ctext keywords $kw {
@@ -360,6 +369,11 @@ proc ApplySyntaxHighlighting {ctext lang} {
     $ctext tag configure keywords -font $Config(font_bold) -foreground $kw
     $ctext tag configure comments -font $Config(font) -foreground $cm
 
+    if {$lang eq "c" || $lang eq "tcl"} {
+        foreach tag {block_comments constants variables} {
+            catch {$ctext tag configure $tag -foreground $pu}
+        }
+    }
     if {$lang eq "markdown"} {
         foreach tag {headings emphasis links code fences tables table_rule quotes lists rules html plugins footnotes references} {
             $ctext tag configure $tag -foreground $pu
