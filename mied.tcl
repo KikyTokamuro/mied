@@ -218,12 +218,13 @@ proc MakeToolbarButton {name width text cmd} {
 
 # --- Syntax highlighting --------------------------------------------------
 
-# Language from extension or shebang: tcl, c, sh, markdown, or empty.
+# Language from extension or shebang: tcl, c, sh, go, markdown, or empty.
 proc DetectLanguage {path content} {
     set ext [string tolower [file extension $path]]
     switch -- $ext {
         .tcl - .tk - .itcl - .tm { return tcl }
         .c - .h - .cpp - .cc - .cxx - .hpp { return c }
+        .go { return go }
         .sh - .bash - .ksh - .zsh { return sh }
         .md - .markdown - .mdown - .mkdn - .mkd { return markdown }
     }
@@ -305,6 +306,24 @@ proc ApplySyntaxHighlighting {ctext lang} {
             ::ctext::addHighlightClassForRegexp $ctext chars $st {'(\\.|[^'\\])'}
             ::ctext::addHighlightClassForRegexp $ctext numbers $nu {\m[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?\M}
             ::ctext::addHighlightClassForSpecialChars $ctext punct $pu {()[]{};,}
+        }
+        go {
+            ::ctext::addHighlightClass $ctext keywords $kw {
+                break default func interface select case defer go map struct
+                chan else goto package switch const fallthrough if range type
+                continue for import return var
+            }
+            ::ctext::addHighlightClass $ctext builtins $pu {
+                append bool byte cap close complex copy delete error false
+                imag len make new nil panic print println real recover true
+            }
+            ::ctext::addHighlightClassForRegexp $ctext comments $cm {//[^\n\r]*}
+            ::ctext::addHighlightClassForRegexp $ctext block_comments $cm {/\*([^*]|\*[^/])*\*/}
+            ::ctext::addHighlightClassForRegexp $ctext strings $st {"(\\.|[^"\\])*"|`[^`]*`}
+            ::ctext::addHighlightClassForRegexp $ctext chars $st {'(\\.|[^'\\])*'}
+            ::ctext::addHighlightClassForRegexp $ctext numbers $nu {\m(0[xX][0-9a-fA-F]+|0[bB][01]+|0[oO][0-7]+|[0-9]+(\.[0-9]*)?([eE][-+]?[0-9]+)?i?)\M}
+            ::ctext::addHighlightClassForRegexp $ctext directives $pp {^[[:space:]]*//[[:space:]]*go:[^\n\r]*}
+            ::ctext::addHighlightClassForSpecialChars $ctext punct {#777777} {()[]{};,.:=*+-/<>!&|^%~}
         }
         sh {
             ::ctext::addHighlightClass $ctext keywords $kw {
@@ -861,6 +880,7 @@ proc OpenFile {} {
         {{All Files}      *}
         {{Tcl Files}      {.tcl .tk}}
         {{C Files}        {.c .h .cpp .cc}}
+        {{Go Files}       {.go}}
         {{Shell Files}    {.sh .bash}}
         {{Markdown Files} {.md .markdown .mdown .mkdn .mkd}}
         {{Text Files}     {.txt}}
@@ -932,6 +952,7 @@ proc SaveAsBuffer {id} {
         {{All Files}      *}
         {{Tcl Files}      {.tcl}}
         {{C Files}        {.c .h}}
+        {{Go Files}       {.go}}
         {{Shell Files}    {.sh}}
         {{Markdown Files} {.md .markdown .mdown .mkdn .mkd}}
         {{Text Files}     {.txt}}

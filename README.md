@@ -8,7 +8,7 @@ A small, distraction-free multi-document text editor built on Tcl/Tk and the
 ## Features
 
 - Multiple buffers
-- Syntax highlighting for: Tcl, C, sh, Markdown
+- Syntax highlighting for: Tcl, C, Go, sh, Markdown
 - Line numbers, status bar with cursor position, and language indicator
 - Find and replace (with case-sensitive toggle)
 - Comment toggling (`#` / `//` based on detected language)
