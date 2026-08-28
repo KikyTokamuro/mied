@@ -27,6 +27,7 @@
 # Changelog
 #     -          version 0.2.0 Added About window
 #                              Added Markdown and Go syntax highlight
+#                              Added the ability to open files via argv
 #     2026-08-28 version 0.1.1 fixing PlaceResizeHandle with MinimizeWindow
 #                              fixing ToggleMaximize with MinimizeWindow
 #     2026-08-22 version 0.1
@@ -43,7 +44,6 @@ set Mied(license) "MIT License, 2026"
 array set Buffers {}          ;# per-buffer fields: id,name,path,content,...
 set ActiveBufferId ""         ;# target of Save / Find / highlighting extras
 set ZIndex 100                ;# stacking counter used with raise
-set CreatingBuffer 0          ;# debounce for New/Open on a held hotkey
 set SidebarVisible 0
 
 set FindPattern ""
@@ -403,10 +403,7 @@ proc ApplySyntaxForBuffer {id} {
 
 # Create a buffer, its window, and make it active. Empty name → untitled-N.
 proc CreateBuffer {name path content} {
-    global Buffers CreatingBuffer
-
-    if {$CreatingBuffer} return
-    set CreatingBuffer 1
+    global Buffers
 
     set id [AllocBufferId]
     if {$name eq ""} {
@@ -427,7 +424,6 @@ proc CreateBuffer {name path content} {
     UpdateBufferList
     SetActiveBuffer $id
 
-    after 100 {set ::CreatingBuffer 0}
     return $id
 }
 
@@ -443,8 +439,21 @@ proc CreateWindow {id} {
     set win $Desktop.buffer$id
     set Buffers($id,window) $win
 
-    set x [expr {20 + ($id % 5) * 30}]
-    set y [expr {20 + ($id % 5) * 25}]
+    # Cascade new buffers around the desktop center instead of from its corner.
+    update idletasks
+    set desktopW [winfo width $Desktop]
+    set desktopH [winfo height $Desktop]
+    if {$desktopW <= 1} { set desktopW 1200 }
+    if {$desktopH <= 1} { set desktopH 800 }
+
+    set bufferW 500
+    set bufferH 350
+    set step 30
+    set offset [expr {$id - 1}]
+    set col [expr {$offset % 5 - 2}]
+    set row [expr {int($offset / 5) - 1}]
+    set x [expr {max(1, ($desktopW - $bufferW) / 2 + $col * $step)}]
+    set y [expr {max(1, ($desktopH - $bufferH) / 2 + $row * $step)}]
 
     frame $win -bg $Config(border) -bd 1 -relief flat
 
@@ -1547,4 +1556,45 @@ proc ShowAbout {} {
 
 # --- Start ----------------------------------------------------------------
 
+# Open files supplied after the script name. A single file starts maximized;
+# multiple files remain as regular independent buffers.
+proc OpenCommandLineFiles {} {
+    global argc argv
+
+    set ::OpeningCommandLineFiles 1
+    set files $argv
+    if {[llength $files] == 0} return
+
+    set opened 0
+    foreach filename $files {
+        if {$filename eq ""} continue
+        set filename [file normalize $filename]
+        if {![file exists $filename] || ![file isfile $filename]} {
+            puts stderr "mied: cannot open '$filename': file does not exist or is not a regular file"
+            continue
+        }
+        if {[catch {
+            set fh [open $filename r]
+            fconfigure $fh -encoding utf-8
+            set content [read $fh]
+            close $fh
+        } err]} {
+            puts stderr "mied: cannot open '$filename': $err"
+            continue
+        }
+        CreateBuffer [file tail $filename] $filename $content
+        incr opened
+    }
+    unset ::OpeningCommandLineFiles
+
+    if {$opened == 1 && [llength $files] == 1} {
+        global ActiveBufferId
+        if {$ActiveBufferId ne ""} {
+            update idletasks
+            ToggleMaximize $ActiveBufferId
+        }
+    }
+}
+
 BuildUI
+OpenCommandLineFiles
