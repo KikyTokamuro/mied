@@ -25,6 +25,8 @@
 # SOFTWARE.
 #
 # Changelog
+#                version 0.2.0 Added About window
+#
 #     2026-08-28 version 0.1.1 fixing PlaceResizeHandle with MinimizeWindow
 #                              fixing ToggleMaximize with MinimizeWindow
 #     2026-08-22 version 0.1
@@ -33,6 +35,8 @@ package require Tk
 package require ctext
 
 set Mied(version) "0.1.1"
+set Mied(authors) "Daniil Arkhangelsky (Kiky Tokamuro)"
+set Mied(license) "MIT License, 2026"
 
 # --- Application state ----------------------------------------------------
 
@@ -1007,6 +1011,7 @@ proc BuildUI {} {
         {save    40 "Save"     SaveActiveBuffer}
         {saveas  60 "Save As"  SaveAsActiveBuffer}
         {sidebar 60 "Buffers"  ToggleSidebar}
+        {about   40 "About"    ShowAbout}
     }
     foreach btn $toolbarButtons {
         lassign $btn bname bwidth btext bcmd
@@ -1429,6 +1434,52 @@ proc ToggleComment {id} {
     $ctext see insert
 
     return -code break
+}
+
+# --- About ----------------------------------------------------------------
+
+proc ShowAbout {} {
+    global Mied Config
+
+    if {[winfo exists .about]} {
+        raise .about
+        return
+    }
+
+    set win [toplevel .about -bg $Config(bg)]
+    wm title $win "About Mied"
+    wm geometry $win 380x280
+    wm resizable $win 0 0
+    wm transient $win .
+    wm protocol $win WM_DELETE_WINDOW [list destroy $win]
+
+    frame $win.body -bg $Config(bg)
+    pack $win.body -fill both -expand 1 -padx 20 -pady 24
+
+    catch {
+        label $win.body.icon -image miedIcon -bg $Config(bg)
+        pack $win.body.icon -pady {0 12}
+    }
+
+    label $win.body.title -text "Mied" \
+        -bg $Config(bg) -fg $Config(title_fg) \
+        -font {"Fira Code" 18 bold}
+    pack $win.body.title
+
+    label $win.body.ver -text "Version $Mied(version)" \
+        -bg $Config(bg) -fg $Config(fg) \
+        -font {"Fira Code" 10}
+    pack $win.body.ver -pady {4 0}
+
+    frame $win.body.spacer -bg $Config(bg) -height 30
+    pack $win.body.spacer -fill x -expand 1
+
+    label $win.body.copy -text "$Mied(authors)\n$Mied(license)" \
+        -bg $Config(bg) -fg $Config(status_fg) \
+        -font $Config(ui_font) -justify center
+    pack $win.body.copy -pady {0 8}
+
+    focus $win
 }
 
 # --- Start ----------------------------------------------------------------

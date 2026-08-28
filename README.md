@@ -74,3 +74,4 @@ Mouse buttons on the find bar:
 | Save    | Save                |
 | Save As | Save as…            |
 | Buffers | Toggle sidebar      |
+| About   | About dialog        |
