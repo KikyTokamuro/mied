@@ -23,10 +23,16 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-
+#
+# Changelog
+#     2026-08-28 version 0.1.1 fixing PlaceResizeHandle with MinimizeWindow
+#                              fixing ToggleMaximize with MinimizeWindow
+#     2026-08-22 version 0.1
 
 package require Tk
 package require ctext
+
+set Mied(version) "0.1.1"
 
 # --- Application state ----------------------------------------------------
 
@@ -34,7 +40,7 @@ array set Buffers {}          ;# per-buffer fields: id,name,path,content,...
 set ActiveBufferId ""         ;# target of Save / Find / highlighting extras
 set ZIndex 100                ;# stacking counter used with raise
 set CreatingBuffer 0          ;# debounce for New/Open on a held hotkey
-set SidebarVisible 1
+set SidebarVisible 0
 
 set FindPattern ""
 set ReplacePattern ""
@@ -144,6 +150,7 @@ proc MaximizedGeom {} {
 proc PlaceResizeHandle {id} {
 	global Buffers
 	if {![SafeWindowExists $id]} return
+	if {![info exists Buffers($id,visible)] || !$Buffers($id,visible)} return
 
     set win $Buffers($id,window)
     set yOff -22
@@ -607,8 +614,8 @@ proc MinimizeWindow {id} {
             set h $Buffers($id,rest_h)
         }
         place $win -height $h
-        PlaceResizeHandle $id
         set Buffers($id,visible) 1
+        PlaceResizeHandle $id
     }
     UpdateBufferList
 }
@@ -786,6 +793,7 @@ proc OnResize {widget x y id} {
 proc ToggleMaximize {id} {
     global Buffers
     if {![SafeWindowExists $id]} return
+    if {![info exists Buffers($id,visible)] || !$Buffers($id,visible)} return
 
     set win $Buffers($id,window)
 
@@ -1426,4 +1434,3 @@ proc ToggleComment {id} {
 # --- Start ----------------------------------------------------------------
 
 BuildUI
-NewBuffer
