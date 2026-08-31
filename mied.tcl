@@ -1563,12 +1563,12 @@ proc ShowAbout {} {
 
     label $win.body.title -text "Mied" \
         -bg $Config(bg) -fg $Config(title_fg) \
-        -font {"Fira Code" 18 bold}
+        -font [list [lindex $Config(font) 0] 18 bold]
     pack $win.body.title
 
     label $win.body.ver -text "Version $Mied(version)" \
         -bg $Config(bg) -fg $Config(fg) \
-        -font {"Fira Code" 10}
+        -font [list [lindex $Config(font) 0] 10]
     pack $win.body.ver -pady {4 0}
 
     frame $win.body.spacer -bg $Config(bg) -height 30
