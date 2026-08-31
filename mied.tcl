@@ -25,9 +25,9 @@
 # SOFTWARE.
 #
 # Changelog
-#     -          version 0.2.0 Added About window
-#                              Added Markdown and Go syntax highlight
-#                              Added the ability to open files via argv
+#     -          version 0.2.0 added About window
+#                              added Markdown, Go, Lua syntax highlight
+#                              added the ability to open files via argv
 #     2026-08-28 version 0.1.1 fixing PlaceResizeHandle with MinimizeWindow
 #                              fixing ToggleMaximize with MinimizeWindow
 #     2026-08-22 version 0.1
@@ -66,8 +66,8 @@ set Config(sidebar_bg)   "#c8c8c8"
 set Config(window_bg)    "#ffffff"
 set Config(titlebar_bg)  "#c8c8c8"
 set Config(border)       "#aaaaaa"
-set Config(font)         {"Fira Code" 9}
-set Config(font_bold)    {"Fira Code" 9 bold}
+set Config(font)         {"Fira Code" 10}
+set Config(font_bold)    {"Fira Code" 10 bold}
 set Config(ui_font)      {"Fira Code" 9}
 set Config(status_fg)    "#666666"
 set Config(close_hover)  "#cc0000"
@@ -225,6 +225,7 @@ proc DetectLanguage {path content} {
         .tcl - .tk - .itcl - .tm { return tcl }
         .c - .h - .cpp - .cc - .cxx - .hpp { return c }
         .go { return go }
+        .lua { return lua }
         .sh - .bash - .ksh - .zsh { return sh }
         .md - .markdown - .mdown - .mkdn - .mkd { return markdown }
     }
@@ -232,6 +233,9 @@ proc DetectLanguage {path content} {
     if {[string match "#!*" $line]} {
         if {[string match "*tclsh*" $line] || [string match "*wish*" $line]} {
             return tcl
+        }
+        if {[string match "*lua*" $line]} {
+            return lua
         }
         if {[string match "*bash*" $line] || [string match "*dash*" $line] \
                 || [regexp {/bin/(ba|k|z)?sh} $line]} {
@@ -245,6 +249,7 @@ proc DetectLanguage {path content} {
 proc CommentPrefix {lang} {
     switch -- $lang {
         c - go { return "//" }
+        lua { return "--" }
         tcl - sh { return "#" }
         default { return "#" }
     }
@@ -335,6 +340,26 @@ proc ApplySyntaxHighlighting {ctext lang} {
             ::ctext::addHighlightClassForRegexp $ctext directives $pp {^[[:space:]]*//[[:space:]]*go:[^\n\r]*}
             ::ctext::addHighlightClassForSpecialChars $ctext punct $pu {()[]{};,.:=*+-/<>!&|^%~}
         }
+        lua {
+            ::ctext::addHighlightClass $ctext keywords $kw {
+                and break do else elseif end false for function goto if in
+                local nil not or repeat return then true until while
+            }
+            ::ctext::addHighlightClass $ctext builtins $pu {
+                assert collectgarbage dofile error _G getmetatable ipairs
+                load loadfile next pairs pcall print rawequal rawget rawlen
+                rawset require select setmetatable tonumber tostring type
+                _VERSION xpcall string table math io os coroutine debug
+                package utf8 self
+            }
+            ::ctext::addHighlightClassForRegexp $ctext comments $cm {--[^\n\r]*}
+            ::ctext::addHighlightClassForRegexp $ctext block_comments $cm {--\[\[([^\]]|\][^\]])*\]\]}
+            ::ctext::addHighlightClassForRegexp $ctext strings $st {"(\\.|[^"\\])*"}
+            ::ctext::addHighlightClassForRegexp $ctext squote $st {'[^']*'}
+            ::ctext::addHighlightClassForRegexp $ctext long_strings $st {\[\[[^\]]*(\][^\]][^\]]*)*\]\]}
+            ::ctext::addHighlightClassForRegexp $ctext numbers $nu {\m(0[xX][0-9a-fA-F]+|[0-9]+(\.[0-9]*)?([eE][-+]?[0-9]+)?)\M}
+            ::ctext::addHighlightClassForSpecialChars $ctext punct $pu {()[]{};,.:+-*/%^#=<>~}
+        }
         sh {
             ::ctext::addHighlightClass $ctext keywords $kw {
                 if then else elif fi case esac for in do done while until
@@ -370,14 +395,15 @@ proc ApplySyntaxHighlighting {ctext lang} {
     $ctext tag configure keywords -font $Config(font_bold) -foreground $kw
     $ctext tag configure comments -font $Config(font) -foreground $cm
 
-    if {$lang eq "c" || $lang eq "tcl"} {
-        foreach tag {block_comments constants variables} {
+    set extraTags [dict create \
+        c        {block_comments constants variables} \
+        tcl      {block_comments constants variables} \
+        lua      {block_comments long_strings} \
+        markdown {headings emphasis links code fences tables table_rule quotes lists rules html plugins footnotes references}
+    ]
+    if {[dict exists $extraTags $lang]} {
+        foreach tag [dict get $extraTags $lang] {
             catch {$ctext tag configure $tag -foreground $pu}
-        }
-    }
-    if {$lang eq "markdown"} {
-        foreach tag {headings emphasis links code fences tables table_rule quotes lists rules html plugins footnotes references} {
-            $ctext tag configure $tag -foreground $pu
         }
     }
 
@@ -905,6 +931,7 @@ proc OpenFile {} {
         {{Tcl Files}      {.tcl .tk}}
         {{C Files}        {.c .h .cpp .cc}}
         {{Go Files}       {.go}}
+        {{Lua Files}      {.lua}}
         {{Shell Files}    {.sh .bash}}
         {{Markdown Files} {.md .markdown .mdown .mkdn .mkd}}
         {{Text Files}     {.txt}}
@@ -977,6 +1004,7 @@ proc SaveAsBuffer {id} {
         {{Tcl Files}      {.tcl}}
         {{C Files}        {.c .h}}
         {{Go Files}       {.go}}
+        {{Lua Files}      {.lua}}
         {{Shell Files}    {.sh}}
         {{Markdown Files} {.md .markdown .mdown .mkdn .mkd}}
         {{Text Files}     {.txt}}
