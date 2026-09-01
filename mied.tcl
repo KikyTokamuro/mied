@@ -25,6 +25,9 @@
 # SOFTWARE.
 #
 # Changelog
+#     2026-09-01 version 0.2.0 added About window
+#                              added Markdown, Go, Lua syntax highlight
+#                              added the ability to open files via argv
 #     2026-08-28 version 0.1.1 fixing PlaceResizeHandle with MinimizeWindow
 #                              fixing ToggleMaximize with MinimizeWindow
 #     2026-08-22 version 0.1
@@ -32,14 +35,15 @@
 package require Tk
 package require ctext
 
-set Mied(version) "0.1.1"
+set Mied(version) "0.2.0"
+set Mied(authors) "Daniil Arkhangelsky (Kiky Tokamuro)"
+set Mied(license) "MIT License, 2026"
 
 # --- Application state ----------------------------------------------------
 
 array set Buffers {}          ;# per-buffer fields: id,name,path,content,...
 set ActiveBufferId ""         ;# target of Save / Find / highlighting extras
 set ZIndex 100                ;# stacking counter used with raise
-set CreatingBuffer 0          ;# debounce for New/Open on a held hotkey
 set SidebarVisible 0
 
 set FindPattern ""
@@ -62,8 +66,8 @@ set Config(sidebar_bg)   "#c8c8c8"
 set Config(window_bg)    "#ffffff"
 set Config(titlebar_bg)  "#c8c8c8"
 set Config(border)       "#aaaaaa"
-set Config(font)         {"Fira Code" 9}
-set Config(font_bold)    {"Fira Code" 9 bold}
+set Config(font)         {"Fira Code" 10}
+set Config(font_bold)    {"Fira Code" 10 bold}
 set Config(ui_font)      {"Fira Code" 9}
 set Config(status_fg)    "#666666"
 set Config(close_hover)  "#cc0000"
@@ -214,18 +218,24 @@ proc MakeToolbarButton {name width text cmd} {
 
 # --- Syntax highlighting --------------------------------------------------
 
-# Language from extension or shebang: tcl, c, sh, or empty.
+# Language from extension or shebang: tcl, c, sh, go, markdown, or empty.
 proc DetectLanguage {path content} {
     set ext [string tolower [file extension $path]]
     switch -- $ext {
         .tcl - .tk - .itcl - .tm { return tcl }
         .c - .h - .cpp - .cc - .cxx - .hpp { return c }
+        .go { return go }
+        .lua { return lua }
         .sh - .bash - .ksh - .zsh { return sh }
+        .md - .markdown - .mdown - .mkdn - .mkd { return markdown }
     }
     set line [string trim [lindex [split $content \n] 0]]
     if {[string match "#!*" $line]} {
         if {[string match "*tclsh*" $line] || [string match "*wish*" $line]} {
             return tcl
+        }
+        if {[string match "*lua*" $line]} {
+            return lua
         }
         if {[string match "*bash*" $line] || [string match "*dash*" $line] \
                 || [regexp {/bin/(ba|k|z)?sh} $line]} {
@@ -238,7 +248,9 @@ proc DetectLanguage {path content} {
 # Comment prefix used by Ctrl+/.
 proc CommentPrefix {lang} {
     switch -- $lang {
-        c { return "//" }
+        c - go { return "//" }
+        lua { return "--" }
+        tcl - sh { return "#" }
         default { return "#" }
     }
 }
@@ -278,10 +290,17 @@ proc ApplySyntaxHighlighting {ctext lang} {
                 ttk::frame ttk::button ttk::entry ttk::label ttk::scrollbar
                 incr append subst regexp regsub scan format clock file
                 cd pwd glob exec pid exit return -code
+                binary lassign lset trace timerate time unknown
+                ::oo::class oo::define oo::objdefine
+            }
+            ::ctext::addHighlightClass $ctext constants $nu {
+                false true tcl_version tcl_patchLevel tcl_library auto_path
+                env argc argv argv0 errorCode errorInfo
             }
             ::ctext::addHighlightClassWithOnlyCharStart $ctext vars $pu "\$"
-            ::ctext::addHighlightClassForSpecialChars $ctext punct $pu {[]{}\\}
+            ::ctext::addHighlightClassForSpecialChars $ctext punct $pu {[]{}\\();}
             ::ctext::addHighlightClassForRegexp $ctext strings $st {"(\\.|[^"\\])*"}
+            ::ctext::addHighlightClassForRegexp $ctext variables $pu {\$\{[^\}]+\}|\$[[:alnum:]_]+|\$[[:alnum:]_]+\([^)]*\)}
             ::ctext::addHighlightClassForRegexp $ctext comments $cm {#[^\n\r]*}
         }
         c {
@@ -291,15 +310,55 @@ proc ApplySyntaxHighlighting {ctext lang} {
                 restrict return short signed sizeof static struct switch
                 typedef union unsigned void volatile while _Bool _Complex
                 _Imaginary include define ifdef ifndef endif pragma undef
-                true false NULL
+                true false NULL EXIT_SUCCESS EXIT_FAILURE
+                stdin stdout stderr va_list size_t ptrdiff_t uint8_t uint16_t
+                uint32_t uint64_t int8_t int16_t int32_t int64_t
             }
-            catch {::ctext::enableComments $ctext}
             ::ctext::addHighlightClassForRegexp $ctext comments $cm {//[^\n\r]*}
-            ::ctext::addHighlightClassForRegexp $ctext preproc $pp {^[[:space:]]*#[[:space:]]*[a-zA-Z]+}
+            ::ctext::addHighlightClassForRegexp $ctext block_comments $cm {/\*([^*]|\*[^/])*\*/}
+            ::ctext::addHighlightClassForRegexp $ctext preproc $pp {^[[:space:]]*#[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]*([[:space:]]+.*)?}
             ::ctext::addHighlightClassForRegexp $ctext strings $st {"(\\.|[^"\\])*"}
-            ::ctext::addHighlightClassForRegexp $ctext chars $st {'(\\.|[^'\\])'}
-            ::ctext::addHighlightClassForRegexp $ctext numbers $nu {\m[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?\M}
-            ::ctext::addHighlightClassForSpecialChars $ctext punct $pu {()[]{};,}
+            ::ctext::addHighlightClassForRegexp $ctext chars $st {'(\\.|[^'\\])*'}
+            ::ctext::addHighlightClassForRegexp $ctext numbers $nu {\m(0[xX][0-9a-fA-F]+([uUlL]*)?|0[bB][01]+([uUlL]*)?|0[0-7]+([uUlL]*)?|[0-9]+(\.[0-9]*)?([eE][-+]?[0-9]+)?[fFlL]?)\M}
+            ::ctext::addHighlightClassForSpecialChars $ctext punct $pu {()[]{};,.:?~!%^&*+=|<>/-}
+        }
+        go {
+            ::ctext::addHighlightClass $ctext keywords $kw {
+                break default func interface select case defer go map struct
+                chan else goto package switch const fallthrough if range type
+                continue for import return var
+            }
+            ::ctext::addHighlightClass $ctext builtins $pu {
+                append bool byte cap close complex copy delete error false
+                imag len make new nil panic print println real recover true
+            }
+            ::ctext::addHighlightClassForRegexp $ctext comments $cm {//[^\n\r]*}
+            ::ctext::addHighlightClassForRegexp $ctext block_comments $cm {/\*([^*]|\*[^/])*\*/}
+            ::ctext::addHighlightClassForRegexp $ctext strings $st {"(\\.|[^"\\])*"|`[^`]*`}
+            ::ctext::addHighlightClassForRegexp $ctext chars $st {'(\\.|[^'\\])*'}
+            ::ctext::addHighlightClassForRegexp $ctext numbers $nu {\m(0[xX][0-9a-fA-F]+|0[bB][01]+|0[oO][0-7]+|[0-9]+(\.[0-9]*)?([eE][-+]?[0-9]+)?i?)\M}
+            ::ctext::addHighlightClassForRegexp $ctext directives $pp {^[[:space:]]*//[[:space:]]*go:[^\n\r]*}
+            ::ctext::addHighlightClassForSpecialChars $ctext punct $pu {()[]{};,.:=*+-/<>!&|^%~}
+        }
+        lua {
+            ::ctext::addHighlightClass $ctext keywords $kw {
+                and break do else elseif end false for function goto if in
+                local nil not or repeat return then true until while
+            }
+            ::ctext::addHighlightClass $ctext builtins $pu {
+                assert collectgarbage dofile error _G getmetatable ipairs
+                load loadfile next pairs pcall print rawequal rawget rawlen
+                rawset require select setmetatable tonumber tostring type
+                _VERSION xpcall string table math io os coroutine debug
+                package utf8 self
+            }
+            ::ctext::addHighlightClassForRegexp $ctext comments $cm {--[^\n\r]*}
+            ::ctext::addHighlightClassForRegexp $ctext block_comments $cm {--\[\[([^\]]|\][^\]])*\]\]}
+            ::ctext::addHighlightClassForRegexp $ctext strings $st {"(\\.|[^"\\])*"}
+            ::ctext::addHighlightClassForRegexp $ctext squote $st {'[^']*'}
+            ::ctext::addHighlightClassForRegexp $ctext long_strings $st {\[\[[^\]]*(\][^\]][^\]]*)*\]\]}
+            ::ctext::addHighlightClassForRegexp $ctext numbers $nu {\m(0[xX][0-9a-fA-F]+|[0-9]+(\.[0-9]*)?([eE][-+]?[0-9]+)?)\M}
+            ::ctext::addHighlightClassForSpecialChars $ctext punct $pu {()[]{};,.:+-*/%^#=<>~}
         }
         sh {
             ::ctext::addHighlightClass $ctext keywords $kw {
@@ -314,10 +373,40 @@ proc ApplySyntaxHighlighting {ctext lang} {
             ::ctext::addHighlightClassForRegexp $ctext comments $cm {#[^\n\r]*}
             ::ctext::addHighlightClassForSpecialChars $ctext punct $pu {[]{}();|}
         }
+        markdown {
+            ::ctext::addHighlightClassForRegexp $ctext headings $kw {^[[:space:]]{0,3}#{1,6}([[:space:]]+|$).*$}
+            ::ctext::addHighlightClassForRegexp $ctext quotes $pu {^[[:space:]]{0,3}(>[[:space:]]*)+}
+            ::ctext::addHighlightClassForRegexp $ctext lists $pu {^[[:space:]]{0,3}([-+*]|[0-9]+\.)[[:space:]]+}
+            ::ctext::addHighlightClassForRegexp $ctext rules $pu {^[[:space:]]{0,3}([-*_][[:space:]]*){3,}$}
+            ::ctext::addHighlightClassForRegexp $ctext tables $pu {^[[:space:]]*\|.*\|[[:space:]]*$}
+            ::ctext::addHighlightClassForRegexp $ctext table_rule $pu {^[[:space:]]*\|?[[:space:]]*:?-+:?[[:space:]]*(\|[[:space:]]*:?-+:?[[:space:]]*)+\|?[[:space:]]*$}
+            ::ctext::addHighlightClassForRegexp $ctext links $st {!?(\[[^\]\n]+\])\([^\)\n]+\)([[:space:]]+"[^"]*")?}
+            ::ctext::addHighlightClassForRegexp $ctext references $st {!?\[[^\]\n]+\][[:space:]]*:[[:space:]]*\S+.*}
+            ::ctext::addHighlightClassForRegexp $ctext code $st {`[^`\n]+`}
+            ::ctext::addHighlightClassForRegexp $ctext emphasis $kw {\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*|_[^_\n]+_|~~[^~\n]+~~}
+            ::ctext::addHighlightClassForRegexp $ctext comments $cm {<!--([^-]|-[^-])*-->}
+            ::ctext::addHighlightClassForRegexp $ctext fences $pp {^[[:space:]]{0,3}(```|~~~)[[:space:]]*[^\n]*$}
+            ::ctext::addHighlightClassForRegexp $ctext html $pu {</?[A-Za-z][^>]*>|<[[:space:]]*![A-Z][^>]*>}
+            ::ctext::addHighlightClassForRegexp $ctext plugins $pu {(^|[[:space:]])(:::[[:space:]]*[^[:space:]]+|\+\+[^+\n]+\+\+|==[^=\n]+==|\^[^^\n]+\^|~[^~\n]+~)([[:space:]]|$)}
+            ::ctext::addHighlightClassForRegexp $ctext footnotes $st {\[\^[^\]]+\]|\[\^[^\]]+\]:.*}
+        }
     }
 
     $ctext tag configure keywords -font $Config(font_bold) -foreground $kw
     $ctext tag configure comments -font $Config(font) -foreground $cm
+
+    set extraTags [dict create \
+        c        {block_comments constants variables} \
+        tcl      {block_comments constants variables} \
+        lua      {block_comments long_strings} \
+        markdown {headings emphasis links code fences tables table_rule quotes lists rules html plugins footnotes references}
+    ]
+    if {[dict exists $extraTags $lang]} {
+        foreach tag [dict get $extraTags $lang] {
+            catch {$ctext tag configure $tag -foreground $pu}
+        }
+    }
+
     $ctext highlight 1.0 end
 }
 
@@ -340,10 +429,7 @@ proc ApplySyntaxForBuffer {id} {
 
 # Create a buffer, its window, and make it active. Empty name → untitled-N.
 proc CreateBuffer {name path content} {
-    global Buffers CreatingBuffer
-
-    if {$CreatingBuffer} return
-    set CreatingBuffer 1
+    global Buffers
 
     set id [AllocBufferId]
     if {$name eq ""} {
@@ -364,7 +450,6 @@ proc CreateBuffer {name path content} {
     UpdateBufferList
     SetActiveBuffer $id
 
-    after 100 {set ::CreatingBuffer 0}
     return $id
 }
 
@@ -380,8 +465,21 @@ proc CreateWindow {id} {
     set win $Desktop.buffer$id
     set Buffers($id,window) $win
 
-    set x [expr {20 + ($id % 5) * 30}]
-    set y [expr {20 + ($id % 5) * 25}]
+    # Cascade new buffers around the desktop center instead of from its corner.
+    update idletasks
+    set desktopW [winfo width $Desktop]
+    set desktopH [winfo height $Desktop]
+    if {$desktopW <= 1} { set desktopW 1200 }
+    if {$desktopH <= 1} { set desktopH 800 }
+
+    set bufferW 500
+    set bufferH 350
+    set step 30
+    set offset [expr {$id - 1}]
+    set col [expr {$offset % 5 - 2}]
+    set row [expr {int($offset / 5) - 1}]
+    set x [expr {max(1, ($desktopW - $bufferW) / 2 + $col * $step)}]
+    set y [expr {max(1, ($desktopH - $bufferH) / 2 + $row * $step)}]
 
     frame $win -bg $Config(border) -bd 1 -relief flat
 
@@ -829,11 +927,14 @@ proc OpenFile {} {
     global Buffers
 
     set types {
-        {{Tcl Files}   {.tcl .tk}}
-        {{C Files}     {.c .h .cpp .cc}}
-        {{Shell Files} {.sh .bash}}
-        {{Text Files}  {.txt}}
-        {{All Files}   *}
+        {{All Files}      *}
+        {{Tcl Files}      {.tcl .tk}}
+        {{C Files}        {.c .h .cpp .cc}}
+        {{Go Files}       {.go}}
+        {{Lua Files}      {.lua}}
+        {{Shell Files}    {.sh .bash}}
+        {{Markdown Files} {.md .markdown .mdown .mkdn .mkd}}
+        {{Text Files}     {.txt}}
     }
 
     set filename [tk_getOpenFile -filetypes $types -title "Open File"]
@@ -899,11 +1000,14 @@ proc SaveAsBuffer {id} {
     if {![info exists Buffers($id,id)]} return
 
     set types {
-        {{Tcl Files}   {.tcl}}
-        {{C Files}     {.c .h}}
-        {{Shell Files} {.sh}}
-        {{Text Files}  {.txt}}
-        {{All Files}   *}
+        {{All Files}      *}
+        {{Tcl Files}      {.tcl}}
+        {{C Files}        {.c .h}}
+        {{Go Files}       {.go}}
+        {{Lua Files}      {.lua}}
+        {{Shell Files}    {.sh}}
+        {{Markdown Files} {.md .markdown .mdown .mkdn .mkd}}
+        {{Text Files}     {.txt}}
     }
 
     set filename [tk_getSaveFile -filetypes $types -title "Save As"]
@@ -1007,6 +1111,7 @@ proc BuildUI {} {
         {save    40 "Save"     SaveActiveBuffer}
         {saveas  60 "Save As"  SaveAsActiveBuffer}
         {sidebar 60 "Buffers"  ToggleSidebar}
+        {about   40 "About"    ShowAbout}
     }
     foreach btn $toolbarButtons {
         lassign $btn bname bwidth btext bcmd
@@ -1431,6 +1536,91 @@ proc ToggleComment {id} {
     return -code break
 }
 
+# --- About ----------------------------------------------------------------
+
+proc ShowAbout {} {
+    global Mied Config
+
+    if {[winfo exists .about]} {
+        raise .about
+        return
+    }
+
+    set win [toplevel .about -bg $Config(bg)]
+    wm title $win "About Mied"
+    wm geometry $win 380x280
+    wm resizable $win 0 0
+    wm transient $win .
+    wm protocol $win WM_DELETE_WINDOW [list destroy $win]
+
+    frame $win.body -bg $Config(bg)
+    pack $win.body -fill both -expand 1 -padx 20 -pady 24
+
+    catch {
+        label $win.body.icon -image miedIcon -bg $Config(bg)
+        pack $win.body.icon -pady {0 12}
+    }
+
+    label $win.body.title -text "Mied" \
+        -bg $Config(bg) -fg $Config(title_fg) \
+        -font [list [lindex $Config(font) 0] 18 bold]
+    pack $win.body.title
+
+    label $win.body.ver -text "Version $Mied(version)" \
+        -bg $Config(bg) -fg $Config(fg) \
+        -font [list [lindex $Config(font) 0] 10]
+    pack $win.body.ver -pady {4 0}
+
+    frame $win.body.spacer -bg $Config(bg) -height 30
+    pack $win.body.spacer -fill x -expand 1
+
+    label $win.body.copy -text "$Mied(authors)\n$Mied(license)" \
+        -bg $Config(bg) -fg $Config(status_fg) \
+        -font $Config(ui_font) -justify center
+    pack $win.body.copy -pady {0 8}
+
+    focus $win
+}
+
 # --- Start ----------------------------------------------------------------
 
+# Open files supplied after the script name. A single file starts maximized;
+# multiple files remain as regular independent buffers.
+proc OpenCommandLineFiles {} {
+    global argc argv
+
+    set files $argv
+    if {[llength $files] == 0} return
+
+    set opened 0
+    foreach filename $files {
+        if {$filename eq ""} continue
+        set filename [file normalize $filename]
+        if {![file exists $filename] || ![file isfile $filename]} {
+            puts stderr "mied: cannot open '$filename': file does not exist or is not a regular file"
+            continue
+        }
+        if {[catch {
+            set fh [open $filename r]
+            fconfigure $fh -encoding utf-8
+            set content [read $fh]
+            close $fh
+        } err]} {
+            puts stderr "mied: cannot open '$filename': $err"
+            continue
+        }
+        CreateBuffer [file tail $filename] $filename $content
+        incr opened
+    }
+
+    if {$opened == 1 && [llength $files] == 1} {
+        global ActiveBufferId
+        if {$ActiveBufferId ne ""} {
+            update idletasks
+            ToggleMaximize $ActiveBufferId
+        }
+    }
+}
+
 BuildUI
+OpenCommandLineFiles

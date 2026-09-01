@@ -8,7 +8,7 @@ A small, distraction-free multi-document text editor built on Tcl/Tk and the
 ## Features
 
 - Multiple buffers
-- Syntax highlighting for Tcl, C, and shell scripts
+- Syntax highlighting for: Tcl, C, Go, sh, Markdown, Lua
 - Line numbers, status bar with cursor position, and language indicator
 - Find and replace (with case-sensitive toggle)
 - Comment toggling (`#` / `//` based on detected language)
@@ -24,7 +24,13 @@ A small, distraction-free multi-document text editor built on Tcl/Tk and the
 
 ```sh
 wish mied.tcl
+wish mied.tcl file.txt
+wish mied.tcl file1.md file2.go file3.tcl
 ```
+
+Files passed after `mied.tcl` are opened in separate buffers. When exactly one
+file is passed, its buffer is maximized automatically; multiple files remain
+as regular movable buffers.
 
 ## Hotkeys
 
@@ -74,3 +80,4 @@ Mouse buttons on the find bar:
 | Save    | Save                |
 | Save As | Save as…            |
 | Buffers | Toggle sidebar      |
+| About   | About dialog        |
