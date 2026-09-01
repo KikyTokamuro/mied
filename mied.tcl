@@ -1589,7 +1589,6 @@ proc ShowAbout {} {
 proc OpenCommandLineFiles {} {
     global argc argv
 
-    set ::OpeningCommandLineFiles 1
     set files $argv
     if {[llength $files] == 0} return
 
@@ -1613,7 +1612,6 @@ proc OpenCommandLineFiles {} {
         CreateBuffer [file tail $filename] $filename $content
         incr opened
     }
-    unset ::OpeningCommandLineFiles
 
     if {$opened == 1 && [llength $files] == 1} {
         global ActiveBufferId
