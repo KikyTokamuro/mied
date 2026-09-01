@@ -25,7 +25,7 @@
 # SOFTWARE.
 #
 # Changelog
-#     -          version 0.2.0 added About window
+#     2026-09-01 version 0.2.0 added About window
 #                              added Markdown, Go, Lua syntax highlight
 #                              added the ability to open files via argv
 #     2026-08-28 version 0.1.1 fixing PlaceResizeHandle with MinimizeWindow
