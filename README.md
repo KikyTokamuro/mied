@@ -26,11 +26,30 @@ A small, distraction-free multi-document text editor built on Tcl/Tk and the
 wish mied.tcl
 wish mied.tcl file.txt
 wish mied.tcl file1.md file2.go file3.tcl
+wish mied.tcl -config mied.conf.example file.txt
 ```
+
+### Options
+
+| Option            | Description                                        |
+| ----------------- | -------------------------------------------------- |
+| `-config <file>`  | Load editor configuration from a Tcl config file   |
 
 Files passed after `mied.tcl` are opened in separate buffers. When exactly one
 file is passed, its buffer is maximized automatically; multiple files remain
 as regular movable buffers.
+
+## Configuration
+
+By default Mied uses its built-in color, font, and highlight settings. Pass a
+config file with `-config` to override them:
+
+```sh
+wish mied.tcl -config my-theme.conf
+```
+
+A config file is a plain Tcl script that sets `Config(...)` keys; keys it does
+not set keep their default values. See [mied.conf.example](./mied.conf.example).
 
 ## Hotkeys
 

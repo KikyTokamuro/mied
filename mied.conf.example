@@ -1,0 +1,71 @@
+# Mied config
+
+# --- General palette ------------------------------------------------------
+
+# Accent color
+set Config(accent)       "#5d7e73"
+
+# Desktop background behind the editor windows
+set Config(bg)           "#e8e8e8"
+
+# Default text color of editor content
+set Config(fg)           "#666666"
+
+# --- Chrome backgrounds ---------------------------------------------------
+
+set Config(toolbar_bg)   "#c8c8c8"
+set Config(sidebar_bg)   "#c8c8c8"
+set Config(window_bg)    "#ffffff"
+set Config(titlebar_bg)  "#c8c8c8"
+
+# 1px rim around windows, toolbar, and sidebar
+set Config(border)       "#aaaaaa"
+
+# --- Fonts ----------------------------------------------------------------
+
+# Editor font and size
+set Config(font)         {"Fira Code" 10}
+set Config(font_bold)    {"Fira Code" 10 bold}
+
+# Smaller font for toolbars, title bars, and status bars
+set Config(ui_font)      {"Fira Code" 9}
+
+# --- Text colors ----------------------------------------------------------
+
+set Config(status_fg)    "#666666"
+set Config(title_fg)     "#444444"
+set Config(list_fg)      "#444444"
+set Config(header_fg)    "#666666"
+set Config(insert_color) "#000000"
+
+# --- Hover states ---------------------------------------------------------
+
+# Close button turns red on hover
+set Config(close_hover)  "#cc0000"
+
+# Minimize button hover
+set Config(min_hover)    "#5d7e73"
+
+# Toolbar and find bar buttons on hover
+set Config(btn_hover_bg) "#bbbbbb"
+set Config(hover_fg)     "#000000"
+
+# --- Selection ------------------------------------------------------------
+
+set Config(sel_bg)       "#5d7e73"
+set Config(sel_fg)       "#ffffff"
+
+# --- Scrollbars and line numbers -----------------------------------------
+
+set Config(scroll_bg)    "#cccccc"
+set Config(linenum_bg)   "#f0f0f0"
+set Config(linenum_fg)   "#888888"
+
+# --- Syntax highlighting --------------------------------------------------
+
+set Config(hl_keyword)   "#222222"
+set Config(hl_comment)   "#9a9a9a"
+set Config(hl_string)    "#555555"
+set Config(hl_number)    "#333333"
+set Config(hl_punct)     "#777777"
+set Config(hl_preproc)   "#444444"

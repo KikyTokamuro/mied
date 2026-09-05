@@ -2,6 +2,12 @@
 #
 # Mied - a small editor on Tcl/Tk.
 #
+# Usage:
+#     wish mied.tcl [-config <config-file>] [file ...]
+#
+# Options:
+#     -config <file>   Load the editor configuration.
+#
 # MIT License
 #
 # Copyright (c) 2026 Daniil Arkhangelsky (Kiky Tokamuro)
@@ -25,6 +31,7 @@
 # SOFTWARE.
 #
 # Changelog
+#     -          version 0.3.0 added -config option to load a config file
 #     2026-09-01 version 0.2.0 added About window
 #                              added Markdown, Go, Lua syntax highlight
 #                              added the ability to open files via argv
@@ -35,7 +42,7 @@
 package require Tk
 package require ctext
 
-set Mied(version) "0.2.0"
+set Mied(version) "0.3.0"
 set Mied(authors) "Daniil Arkhangelsky (Kiky Tokamuro)"
 set Mied(license) "MIT License, 2026"
 
@@ -56,41 +63,71 @@ set Layout(toolbar_h) 32
 set Layout(sidebar_w) 180
 set Layout(gap)       2       ;# gutter between sidebar and desktop
 
-# --- Theme ----------------------------------------------------------------
+# --- Config ----------------------------------------------------------------
 
-set Config(accent)       "#5d7e73"
-set Config(bg)           "#e8e8e8"
-set Config(fg)           "#666666"
-set Config(toolbar_bg)   "#c8c8c8"
-set Config(sidebar_bg)   "#c8c8c8"
-set Config(window_bg)    "#ffffff"
-set Config(titlebar_bg)  "#c8c8c8"
-set Config(border)       "#aaaaaa"
-set Config(font)         {"Fira Code" 10}
-set Config(font_bold)    {"Fira Code" 10 bold}
-set Config(ui_font)      {"Fira Code" 9}
-set Config(status_fg)    "#666666"
-set Config(close_hover)  "#cc0000"
-set Config(min_hover)    "#5d7e73"
-set Config(btn_hover_bg) "#bbbbbb"
-set Config(hover_fg)     "#000000"
-set Config(title_fg)     "#444444"
-set Config(list_fg)      "#444444"
-set Config(insert_color) "#000000"
-set Config(sel_bg)       "#5d7e73"
-set Config(sel_fg)       "#ffffff"
-set Config(scroll_bg)    "#cccccc"
-set Config(header_fg)    "#666666"
-set Config(linenum_bg)   "#f0f0f0"
-set Config(linenum_fg)   "#888888"
+# Built-in defaults. A user config file (-config) may override any of them.
+proc LoadDefaultConfig {} {
+    global Config
 
-# Monochrome highlight: dark ink for structure, lighter gray for asides.
-set Config(hl_keyword)   "#222222"
-set Config(hl_comment)   "#9a9a9a"
-set Config(hl_string)    "#555555"
-set Config(hl_number)    "#333333"
-set Config(hl_punct)     "#777777"
-set Config(hl_preproc)   "#444444"
+    set Config(accent)       "#5d7e73"
+    set Config(bg)           "#e8e8e8"
+    set Config(fg)           "#666666"
+    set Config(toolbar_bg)   "#c8c8c8"
+    set Config(sidebar_bg)   "#c8c8c8"
+    set Config(window_bg)    "#ffffff"
+    set Config(titlebar_bg)  "#c8c8c8"
+    set Config(border)       "#aaaaaa"
+    set Config(font)         {"Fira Code" 10}
+    set Config(font_bold)    {"Fira Code" 10 bold}
+    set Config(ui_font)      {"Fira Code" 9}
+    set Config(status_fg)    "#666666"
+    set Config(close_hover)  "#cc0000"
+    set Config(min_hover)    "#5d7e73"
+    set Config(btn_hover_bg) "#bbbbbb"
+    set Config(hover_fg)     "#000000"
+    set Config(title_fg)     "#444444"
+    set Config(list_fg)      "#444444"
+    set Config(insert_color) "#000000"
+    set Config(sel_bg)       "#5d7e73"
+    set Config(sel_fg)       "#ffffff"
+    set Config(scroll_bg)    "#cccccc"
+    set Config(header_fg)    "#666666"
+    set Config(linenum_bg)   "#f0f0f0"
+    set Config(linenum_fg)   "#888888"
+
+    # Monochrome highlight
+    set Config(hl_keyword)   "#222222"
+    set Config(hl_comment)   "#9a9a9a"
+    set Config(hl_string)    "#555555"
+    set Config(hl_number)    "#333333"
+    set Config(hl_punct)     "#777777"
+    set Config(hl_preproc)   "#444444"
+}
+
+# Source a user config file over the defaults. The file is plain Tcl and can
+# set any Config(...) key; keys it does not set keep their default values.
+proc LoadConfigFile {path} {
+    global Config
+
+    if {![file exists $path]} {
+        puts stderr "mied: config file '$path' not found, using default config"
+        return 0
+    }
+    if {![file isfile $path] || ![file readable $path]} {
+        puts stderr "mied: cannot read config file '$path', using default config"
+        return 0
+    }
+
+    if {[catch {source $path} err]} {
+        puts stderr "mied: error in config file '$path': $err"
+        puts stderr "mied: falling back to default config"
+        array unset Config
+        LoadDefaultConfig
+        return 0
+    }
+
+    return 1
+}
 
 # --- Helpers --------------------------------------------------------------
 
@@ -1582,14 +1619,53 @@ proc ShowAbout {} {
     focus $win
 }
 
+# --- Argv ----------------------------------------------------------------
+
+# Parse argv: mied.tcl [-config <file>] [file ...]
+# -config is applied over the built-in defaults; the rest are file names.
+# Returns the list of files to open.
+proc ParseArgv {} {
+    global argv Config
+
+    set configFile ""
+    set files [list]
+
+    for {set i 0} {$i < [llength $argv]} {incr i} {
+        set arg [lindex $argv $i]
+        if {$arg eq "-config" || $arg eq "--config"} {
+            incr i
+            if {$i >= [llength $argv]} {
+                puts stderr "mied: $arg requires a file argument"
+                exit 1
+            }
+            set configFile [lindex $argv $i]
+        } elseif {[string match "-*" $arg] && $arg ne "-"} {
+            puts stderr "mied: unknown option '$arg'"
+            puts stderr "usage: mied.tcl \[-config <config-file>\] \[file ...\]"
+        } else {
+            lappend files $arg
+        }
+    }
+
+    if {![array size Config]} {
+        LoadDefaultConfig
+    }
+    if {$configFile ne ""} {
+        LoadConfigFile $configFile
+    }
+
+    return $files
+}
+
 # --- Start ----------------------------------------------------------------
 
-# Open files supplied after the script name. A single file starts maximized;
-# multiple files remain as regular independent buffers.
-proc OpenCommandLineFiles {} {
-    global argc argv
+# Parse argv, build the UI with the resulting config, then open the given
+# files. A single file starts maximized; multiple files remain as regular
+# independent buffers.
+proc Main {} {
+    set files [ParseArgv]
+    BuildUI
 
-    set files $argv
     if {[llength $files] == 0} return
 
     set opened 0
@@ -1622,5 +1698,4 @@ proc OpenCommandLineFiles {} {
     }
 }
 
-BuildUI
-OpenCommandLineFiles
+Main
