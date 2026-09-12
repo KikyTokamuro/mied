@@ -27,7 +27,9 @@ set Config(border)       "#aaaaaa"
 set Config(font)         {"Fira Code" 10}
 set Config(font_bold)    {"Fira Code" 10 bold}
 
-# Smaller font for toolbars, title bars, and status bars
+# Smaller font for toolbars, title bars, and status bars. The chrome
+# (bar and button sizes) scales with this size, so enlarging it enlarges
+# the toolbar, buttons, and status bar along with the text.
 set Config(ui_font)      {"Fira Code" 9}
 
 # --- Text colors ----------------------------------------------------------

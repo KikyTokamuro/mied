@@ -32,6 +32,7 @@
 #
 # Changelog
 #     -          version 0.3.0 added -config option to load a config file
+#                              fixing ui size with bigger ui font
 #     2026-09-01 version 0.2.0 added About window
 #                              added Markdown, Go, Lua syntax highlight
 #                              added the ability to open files via argv
@@ -59,9 +60,44 @@ set FindCaseSensitive 0
 
 # --- Layout ---------------------------------------------------------------
 
-set Layout(toolbar_h) 32
 set Layout(sidebar_w) 180
 set Layout(gap)       2       ;# gutter between sidebar and desktop
+
+# Size component of a font descriptor ({family size ?style?}). 9 is the
+# default ui size and the reference for every scaled chrome metric.
+proc FontSize {font} {
+    set size [lindex $font 1]
+    if {[string is integer -strict $size]} {
+        return [expr {abs($size)}]
+    }
+    return 9
+}
+
+# Derive bar, button, and padding sizes from Config(ui_font) so the chrome
+# grows with the font instead of clipping labels inside fixed-size widgets.
+# At the default ui size these match the original fixed layout.
+proc ComputeLayout {} {
+    global Config Layout
+
+    set scale [expr {double([FontSize $Config(ui_font)]) / 9.0}]
+    if {$scale < 1.0} { set scale 1.0 }
+    set Layout(padx)     [expr {max(4, int(round(4 * $scale)))}]
+    set Layout(pady)     [expr {max(3, int(round(3 * $scale)))}]
+    set Layout(find_pad) [expr {max(2, int(round(2 * $scale)))}]
+
+    set line   [font metrics $Config(ui_font) -linespace]
+    set minBtn [expr {$line + 2}]
+
+    set Layout(btn_h)      [expr {max(int(round(24 * $scale)), $minBtn)}]
+    set Layout(findbtn_h)  [expr {max(int(round(22 * $scale)), $minBtn)}]
+    set Layout(titlebtn_h) [expr {max(int(round(20 * $scale)), $minBtn)}]
+
+    set Layout(toolbar_h)   [expr {$Layout(btn_h) + 2 * $Layout(pady) + 2}]
+    set Layout(titlebar_h)  [expr {max(int(round(26 * $scale)), $Layout(titlebtn_h) + 2 * $Layout(pady))}]
+    set Layout(findbar_h)   [expr {$Layout(findbtn_h) + 2 * $Layout(find_pad)}]
+    set Layout(statusbar_h) [expr {max(int(round(22 * $scale)), $line + 2 * $Layout(pady))}]
+    set Layout(header_h)    [expr {max(int(round(24 * $scale)), $line + 2 * $Layout(pady))}]
+}
 
 # --- Config ----------------------------------------------------------------
 
@@ -187,6 +223,21 @@ proc MaximizedGeom {} {
     return [list $g $g [expr {max(50, $dw - 2 * $g)}] [expr {max(50, $dh - 2 * $g)}]]
 }
 
+# Distance from the window bottom to the resize grip: above the status bar
+# and, when the find bar is open, above that as well. Bar heights are measured
+# from the widgets, since the bars size themselves from their contents.
+proc ResizeHandleOffset {id} {
+    global Buffers
+
+    set win $Buffers($id,window)
+    set yOff [winfo reqheight $win.statusbar]
+    if {[info exists Buffers($id,findbar)] && $Buffers($id,findbar) \
+            && [winfo exists $win.findbar]} {
+        incr yOff [winfo reqheight $win.findbar]
+    }
+    return [expr {-$yOff}]
+}
+
 # Pins the resize grip above the status bar (and findbar, if shown).
 proc PlaceResizeHandle {id} {
 	global Buffers
@@ -194,16 +245,20 @@ proc PlaceResizeHandle {id} {
 	if {![info exists Buffers($id,visible)] || !$Buffers($id,visible)} return
 
     set win $Buffers($id,window)
-    set yOff -22
-    if {[info exists Buffers($id,findbar)] && $Buffers($id,findbar)} {
-        set yOff -48
-    }
+    set yOff [ResizeHandleOffset $id]
     place $win.resize -relx 1.0 -rely 1.0 -anchor se -y $yOff
     raise $win.resize
 }
 
 # Flat canvas button. Uses grid when -row/-column is present, otherwise pack.
+# width/height are minimums: the button grows to fit its label, so toolbar and
+# find bar text stays readable whatever Config(ui_font) is set to.
 proc MakeFlatButton {parent name width height text font bg fg hover_bg hover_fg cmd geomopts} {
+    global Layout
+
+    set width  [expr {max($width, [font measure $font $text] + 2 * $Layout(padx))}]
+    set height [expr {max($height, [font metrics $font -linespace] + 2)}]
+
     set path ${parent}.${name}
     canvas $path -width $width -height $height -bg $bg \
         -highlightthickness 0 -cursor hand2
@@ -244,13 +299,13 @@ proc MakeFlatButton {parent name width height text font bg fg hover_bg hover_fg 
     return $path
 }
 
-# Toolbar button with a fixed 24px height.
+# Toolbar button, 24px high at the default font size.
 proc MakeToolbarButton {name width text cmd} {
-    global Config
-    MakeFlatButton .toolbar.inner $name $width 24 $text \
+    global Config Layout
+    MakeFlatButton .toolbar.inner $name $width $Layout(btn_h) $text \
         $Config(ui_font) $Config(toolbar_bg) $Config(fg) \
         $Config(btn_hover_bg) $Config(hover_fg) $cmd \
-        [list -side left -padx 2 -pady 3]
+        [list -side left -padx 2 -pady $Layout(pady)]
 }
 
 # --- Syntax highlighting --------------------------------------------------
@@ -497,7 +552,7 @@ proc NewBuffer {} {
 
 # Build the Tk window: titlebar, ctext, scrollbars, status, findbar.
 proc CreateWindow {id} {
-    global Buffers Config Desktop
+    global Buffers Config Desktop Layout
 
     set win $Desktop.buffer$id
     set Buffers($id,window) $win
@@ -520,15 +575,15 @@ proc CreateWindow {id} {
 
     frame $win -bg $Config(border) -bd 1 -relief flat
 
-    frame $win.titlebar -bg $Config(titlebar_bg) -height 26 -cursor fleur
+    frame $win.titlebar -bg $Config(titlebar_bg) -height $Layout(titlebar_h) -cursor fleur
     grid $win.titlebar -row 0 -column 0 -sticky ew
 
-    MakeFlatButton $win.titlebar minbtn 20 20 "_" \
+    MakeFlatButton $win.titlebar minbtn $Layout(titlebtn_h) $Layout(titlebtn_h) "_" \
         $Config(ui_font) $Config(titlebar_bg) $Config(status_fg) \
         $Config(titlebar_bg) $Config(min_hover) [list MinimizeWindow $id] \
         [list -side right -padx 2]
 
-    MakeFlatButton $win.titlebar closebtn 20 20 "x" \
+    MakeFlatButton $win.titlebar closebtn $Layout(titlebtn_h) $Layout(titlebtn_h) "x" \
         $Config(ui_font) $Config(titlebar_bg) $Config(status_fg) \
         $Config(titlebar_bg) $Config(close_hover) [list CloseBuffer $id] \
         [list -side right -padx 6]
@@ -577,9 +632,10 @@ proc CreateWindow {id} {
     ttk::style configure Vertical.TScrollbar   -background $Config(scroll_bg)
     ttk::style configure Horizontal.TScrollbar -background $Config(scroll_bg)
 
-    frame $win.resize -bg $Config(border) -width 17 -height 15 -cursor sizing
+    # Sized from the scrollbars below; 17x15 is only the fallback size.
+    frame $win.resize -bg $Config(border) -cursor sizing -width 17 -height 15
 
-    frame $win.statusbar -bg $Config(titlebar_bg) -height 22
+    frame $win.statusbar -bg $Config(titlebar_bg) -height $Layout(statusbar_h)
     grid $win.statusbar -row 2 -column 0 -sticky ew
 
     label $win.statusbar.lines -text "Ln 1, Col 1" \
@@ -597,7 +653,7 @@ proc CreateWindow {id} {
         -font $Config(ui_font) -anchor e
     pack $win.statusbar.info -side right -padx 8
 
-    frame $win.findbar -bg $Config(toolbar_bg) -height 26
+    frame $win.findbar -bg $Config(toolbar_bg) -height $Layout(findbar_h)
     grid columnconfigure $win.findbar 0 -weight 1 -minsize 30
     grid columnconfigure $win.findbar 1 -weight 1 -minsize 30
 
@@ -611,10 +667,10 @@ proc CreateWindow {id} {
         -highlightthickness 1 -highlightcolor $Config(accent)
     grid $win.findbar.replace -row 0 -column 1 -sticky ew -padx 2 -pady 2
 
-    MakeFlatButton $win.findbar btn_case 26 22 "Aa" \
+    MakeFlatButton $win.findbar btn_case 26 $Layout(findbtn_h) "Aa" \
         $Config(ui_font) $Config(toolbar_bg) $Config(fg) \
         $Config(btn_hover_bg) $Config(hover_fg) ToggleFindCase \
-        [list -row 0 -column 2 -padx 1 -pady 2]
+        [list -row 0 -column 2 -padx 1 -pady $Layout(find_pad)]
     StyleCaseButton $win.findbar.btn_case
 
     set findbarButtons {
@@ -636,10 +692,10 @@ proc CreateWindow {id} {
             set btnHoverFg $Config(hover_fg)
         }
 
-        MakeFlatButton $win.findbar btn_$bname $bwidth 22 $btext \
+        MakeFlatButton $win.findbar btn_$bname $bwidth $Layout(findbtn_h) $btext \
             $Config(ui_font) $Config(toolbar_bg) $btnFg \
             $Config(btn_hover_bg) $btnHoverFg [list $bcmd $id] \
-            [list -row 0 -column $col -padx 1 -pady 2]
+            [list -row 0 -column $col -padx 1 -pady $Layout(find_pad)]
 
         incr col
     }
@@ -656,6 +712,15 @@ proc CreateWindow {id} {
     bind $win.content.ctext <<Modified>>      +[list OnTextChange $id]
 
     place $win -x $x -y $y -width 500 -height 350
+    update idletasks
+
+    # The grip fills the corner between the two scrollbars, so it follows their
+    # thickness instead of scaling with the font.
+    set gripW [winfo width $win.content.vsb]
+    set gripH [winfo height $win.content.hsb]
+    if {$gripW > 1 && $gripH > 1} {
+        $win.resize configure -width $gripW -height $gripH
+    }
     PlaceResizeHandle $id
     raise $win
     incr ::ZIndex
@@ -736,7 +801,7 @@ proc MinimizeWindow {id} {
         grid forget $win.statusbar
         grid forget $win.findbar
         place forget $win.resize
-        place $win -height 28
+        place $win -height [expr {[winfo reqheight $win.titlebar] + 2}]
         set Buffers($id,visible) 0
     } else {
         grid $win.content   -row 1 -column 0 -sticky nsew
@@ -1125,6 +1190,8 @@ proc RelayoutMaximized {} {
 proc BuildUI {} {
     global Config Desktop SidebarList StatusLabel Layout
 
+    ComputeLayout
+
     set scriptDir [file dirname [file normalize [info script]]]
     set iconPath [file join $scriptDir "img/icon.png"]
     if {[file exists $iconPath]} {
@@ -1167,13 +1234,13 @@ proc BuildUI {} {
 
     label .sidebar.header -text "Buffers" -fg $Config(header_fg) \
         -bg $Config(sidebar_bg) -font $Config(ui_font)
-    place .sidebar.header -x 0 -y 0 -relwidth 1 -height 24
+    place .sidebar.header -x 0 -y 0 -relwidth 1 -height $Layout(header_h)
 
     listbox .sidebar.list -bg $Config(sidebar_bg) -fg $Config(list_fg) \
         -font $Config(ui_font) -bd 0 -highlightthickness 0 \
         -selectbackground $Config(sel_bg) -selectforeground $Config(sel_fg) \
         -activestyle none -exportselection 0
-    place .sidebar.list -x 0 -y 24 -relwidth 1 -relheight 1 -height -24
+    place .sidebar.list -x 0 -y $Layout(header_h) -relwidth 1 -relheight 1 -height -$Layout(header_h)
     set SidebarList .sidebar.list
 
     bind .sidebar.list <Button-1> {
@@ -1585,7 +1652,6 @@ proc ShowAbout {} {
 
     set win [toplevel .about -bg $Config(bg)]
     wm title $win "About Mied"
-    wm geometry $win 380x280
     wm resizable $win 0 0
     wm transient $win .
     wm protocol $win WM_DELETE_WINDOW [list destroy $win]
@@ -1613,8 +1679,13 @@ proc ShowAbout {} {
 
     label $win.body.copy -text "$Mied(authors)\n$Mied(license)" \
         -bg $Config(bg) -fg $Config(status_fg) \
-        -font $Config(ui_font) -justify center
+        -font $Config(ui_font) -justify center \
+        -wraplength 340
     pack $win.body.copy -pady {0 8}
+
+    update idletasks
+    wm geometry $win [format "%dx%d" \
+        [expr {max(380, [winfo reqwidth $win])}] [winfo reqheight $win]]
 
     focus $win
 }
