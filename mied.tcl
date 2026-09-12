@@ -31,8 +31,9 @@
 # SOFTWARE.
 #
 # Changelog
-#     -          version 0.3.0 added -config option to load a config file
+#     2026-09-12 version 0.3.0 added -config option to load a config file
 #                              fixing ui size with bigger ui font
+#                              added treeview buffer
 #     2026-09-01 version 0.2.0 added About window
 #                              added Markdown, Go, Lua syntax highlight
 #                              added the ability to open files via argv
@@ -131,6 +132,9 @@ proc LoadDefaultConfig {} {
     set Config(linenum_bg)   "#f0f0f0"
     set Config(linenum_fg)   "#888888"
 
+    # File tree buffers start with dot entries hidden; Ctrl+H toggles it.
+    set Config(tree_show_hidden) 0
+
     # Monochrome highlight
     set Config(hl_keyword)   "#222222"
     set Config(hl_comment)   "#9a9a9a"
@@ -171,6 +175,12 @@ proc LoadConfigFile {path} {
 proc SafeWindowExists {id} {
     global Buffers
     return [expr {[info exists Buffers($id,window)] && [winfo exists $Buffers($id,window)]}]
+}
+
+# True when the buffer is an editable text document (not a file tree).
+proc IsEditor {id} {
+    global Buffers
+    return [expr {[info exists Buffers($id,kind)] && $Buffers($id,kind) eq "editor"}]
 }
 
 # Sorted list of live buffer ids.
@@ -506,6 +516,7 @@ proc ApplySyntaxHighlighting {ctext lang} {
 proc ApplySyntaxForBuffer {id} {
     global Buffers
     if {![SafeWindowExists $id]} return
+    if {![IsEditor $id]} return
 
     set content $Buffers($id,content)
     if {[SafeWindowExists $id]} {
@@ -520,7 +531,8 @@ proc ApplySyntaxForBuffer {id} {
 # --- Buffer lifecycle -----------------------------------------------------
 
 # Create a buffer, its window, and make it active. Empty name → untitled-N.
-proc CreateBuffer {name path content} {
+# kind is "editor" for a text document or "tree" for a file tree.
+proc CreateBuffer {name path content {kind editor}} {
     global Buffers
 
     set id [AllocBufferId]
@@ -536,7 +548,13 @@ proc CreateBuffer {name path content} {
     set Buffers($id,visible)   1
     set Buffers($id,maximized) 0
     set Buffers($id,findbar)   0
-    set Buffers($id,lang)      [DetectLanguage $path $content]
+    set Buffers($id,kind)      $kind
+    set Buffers($id,lang)      ""
+    if {$kind eq "editor"} {
+        set Buffers($id,lang) [DetectLanguage $path $content]
+    } else {
+        set Buffers($id,hidden) [TreeHiddenDefault]
+    }
 
     CreateWindow $id
     UpdateBufferList
@@ -550,11 +568,48 @@ proc NewBuffer {} {
     CreateBuffer "" "" ""
 }
 
-# Build the Tk window: titlebar, ctext, scrollbars, status, findbar.
+# File tree buffer; dir defaults to the active buffer's directory.
+proc NewTreeBuffer {{dir ""}} {
+    if {$dir eq ""} {
+        set dir [TreeDefaultRoot]
+    }
+    if {![file isdirectory $dir]} {
+        set dir [pwd]
+    }
+    set dir [file normalize $dir]
+
+    CreateBuffer [TreeBufferName $dir] $dir "" tree
+}
+
+# Directory a new tree buffer should start in: the active buffer's directory,
+# or the working directory when nothing file-backed is open.
+proc TreeDefaultRoot {} {
+    global Buffers ActiveBufferId
+
+    if {$ActiveBufferId ne "" && [info exists Buffers($ActiveBufferId,path)]} {
+        set path $Buffers($ActiveBufferId,path)
+        if {$path ne ""} {
+            if {[file isdirectory $path]} { return $path }
+            return [file dirname $path]
+        }
+    }
+    return [pwd]
+}
+
+# Title bar / sidebar label of a tree buffer.
+proc TreeBufferName {dir} {
+    set tail [string trim [file tail $dir]]
+    if {$tail eq ""} { set tail $dir }
+    return "Tree: $tail"
+}
+
+# Build the Tk window: title bar, status bar, and the body for the buffer
+# kind (an editor, or a file tree).
 proc CreateWindow {id} {
     global Buffers Config Desktop Layout
 
     set win $Desktop.buffer$id
+    set kind $Buffers($id,kind)
     set Buffers($id,window) $win
 
     # Cascade new buffers around the desktop center instead of from its corner.
@@ -588,6 +643,19 @@ proc CreateWindow {id} {
         $Config(titlebar_bg) $Config(close_hover) [list CloseBuffer $id] \
         [list -side right -padx 6]
 
+    if {$kind eq "tree"} {
+        MakeFlatButton $win.titlebar folderbtn $Layout(titlebtn_h) $Layout(titlebtn_h) "..." \
+            $Config(ui_font) $Config(titlebar_bg) $Config(status_fg) \
+            $Config(titlebar_bg) $Config(hover_fg) [list ChooseTreeRoot $id] \
+            [list -side right -padx 6]
+
+        MakeFlatButton $win.titlebar dotbtn $Layout(titlebtn_h) $Layout(titlebtn_h) ".*" \
+            $Config(ui_font) $Config(titlebar_bg) $Config(status_fg) \
+            $Config(titlebar_bg) $Config(hover_fg) [list TreeToggleHidden $id] \
+            [list -side right -padx 2]
+        StyleTreeDotButton $id
+    }
+
     label $win.titlebar.label -text "$Buffers($id,name)" \
         -bg $Config(titlebar_bg) -fg $Config(title_fg) \
         -font $Config(ui_font) -anchor w
@@ -595,6 +663,132 @@ proc CreateWindow {id} {
 
     frame $win.content -bg $Config(window_bg)
     grid $win.content -row 1 -column 0 -sticky nsew
+
+    ttk::style configure Vertical.TScrollbar   -background $Config(scroll_bg)
+    ttk::style configure Horizontal.TScrollbar -background $Config(scroll_bg)
+
+    if {$kind eq "tree"} {
+        BuildTreeBody $id
+    } else {
+        BuildEditorBody $id
+    }
+
+    # Sized from the scrollbars below; 17x15 is only the fallback size.
+    frame $win.resize -bg $Config(border) -cursor sizing -width 17 -height 15
+
+    frame $win.statusbar -bg $Config(titlebar_bg) -height $Layout(statusbar_h)
+    grid $win.statusbar -row 2 -column 0 -sticky ew
+
+    if {$kind eq "tree"} {
+        label $win.statusbar.root -text $Buffers($id,path) \
+            -bg $Config(titlebar_bg) -fg $Config(status_fg) \
+            -font $Config(ui_font) -anchor w
+        pack $win.statusbar.root -side left -padx 8
+
+        label $win.statusbar.count -text "" \
+            -bg $Config(titlebar_bg) -fg $Config(status_fg) \
+            -font $Config(ui_font) -anchor e
+        pack $win.statusbar.count -side right -padx 8
+        TreeUpdateStatus $id
+    } else {
+        label $win.statusbar.lines -text "Ln 1, Col 1" \
+            -bg $Config(titlebar_bg) -fg $Config(status_fg) \
+            -font $Config(ui_font) -anchor w
+        pack $win.statusbar.lines -side left -padx 8
+
+        label $win.statusbar.lang -text "" \
+            -bg $Config(titlebar_bg) -fg $Config(status_fg) \
+            -font $Config(ui_font) -anchor e
+        pack $win.statusbar.lang -side right -padx 8
+
+        label $win.statusbar.info -text "" \
+            -bg $Config(titlebar_bg) -fg $Config(status_fg) \
+            -font $Config(ui_font) -anchor e
+        pack $win.statusbar.info -side right -padx 8
+    }
+
+    if {$kind eq "editor"} {
+        BuildFindBar $id
+    }
+
+    grid rowconfigure    $win 1 -weight 1
+    grid columnconfigure $win 0 -weight 1
+
+    if {$kind eq "editor"} {
+        bind $win.content.ctext <KeyRelease>      +[list UpdateLineCounter $id]
+        bind $win.content.ctext <ButtonRelease-1> +[list UpdateLineCounter $id]
+        bind $win.content.ctext <<Modified>>      +[list OnTextChange $id]
+    }
+
+    place $win -x $x -y $y -width 500 -height 350
+    update idletasks
+
+    # The grip fills the corner between the scrollbars, so it follows their
+    # thickness instead of scaling with the font. A tree buffer has only the
+    # vertical bar, in which case the grip is square.
+    set gripW [winfo width $win.content.vsb]
+    set gripH 0
+    if {[winfo exists $win.content.hsb]} {
+        set gripH [winfo height $win.content.hsb]
+    }
+    if {$gripW > 1 && $gripH > 1} {
+        $win.resize configure -width $gripW -height $gripH
+    } elseif {$gripW > 1} {
+        $win.resize configure -width $gripW -height $gripW
+    }
+    PlaceResizeHandle $id
+    raise $win
+    incr ::ZIndex
+
+    bind $win.titlebar <ButtonPress-1>   [list StartDrag %W %X %Y $id]
+    bind $win.titlebar <B1-Motion>       [list OnDrag %W %X %Y $id]
+    bind $win.titlebar <Double-Button-1> [list ToggleMaximize $id]
+
+    bind $win.titlebar.label <ButtonPress-1>   [list StartDrag %W %X %Y $id]
+    bind $win.titlebar.label <B1-Motion>       [list OnDrag %W %X %Y $id]
+    bind $win.titlebar.label <Double-Button-1> [list ToggleMaximize $id]
+
+    bind $win.resize <ButtonPress-1> [list StartResize %W %X %Y $id]
+    bind $win.resize <B1-Motion>     [list OnResize %W %X %Y $id]
+
+    bind $win <Button-1> [list ActivateWindow $id]
+
+    if {$kind eq "tree"} {
+        focus $win.content.tree
+    } else {
+        bind $win.content.ctext <Button-1> +[list ActivateWindow $id]
+
+        bind $win.content.ctext <Control-s>     [list SaveBuffer $id]
+        bind $win.content.ctext <Control-w>     [list CloseBuffer $id]
+        bind $win.content.ctext <Control-f>     [list ShowFindBar $id]
+        bind $win.content.ctext <Control-l>     [list SelectCurrentLine $id]
+        bind $win.content.ctext <Control-slash> [list ToggleComment $id]
+        bind $win.content.ctext <Return>        [list IndentOnReturn $id]
+        bind $win.content.ctext <Tab>           [list IndentBuffer $id 1]
+        bind $win.content.ctext <ISO_Left_Tab>  [list IndentBuffer $id -1]
+        bind $win.content.ctext <Shift-Tab>     [list IndentBuffer $id -1]
+        bind $win.content.ctext <Escape>        [list HideFindBar $id]
+        bind $win.content.ctext <Control-Tab>   {CycleBuffer 1; break}
+        bind $win.content.ctext <Control-Shift-Tab> {CycleBuffer -1; break}
+
+        if {$Buffers($id,content) ne ""} {
+            $win.content.ctext fastinsert 1.0 $Buffers($id,content)
+            $win.content.ctext edit modified 0
+        }
+        ApplySyntaxForBuffer $id
+
+        focus $win.content.ctext
+    }
+
+    ActivateWindow $id
+    UpdateLineCounter $id
+}
+
+# Body of an editor buffer: the ctext widget and its two scrollbars.
+proc BuildEditorBody {id} {
+    global Buffers Config
+
+    set win $Buffers($id,window)
 
     ctext $win.content.ctext -bg $Config(window_bg) -fg $Config(fg) \
         -font $Config(font) -wrap none \
@@ -628,30 +822,13 @@ proc CreateWindow {id} {
     grid $win.content.hsb   -row 1 -column 0 -sticky ew
     grid rowconfigure    $win.content 0 -weight 1
     grid columnconfigure $win.content 0 -weight 1
+}
 
-    ttk::style configure Vertical.TScrollbar   -background $Config(scroll_bg)
-    ttk::style configure Horizontal.TScrollbar -background $Config(scroll_bg)
+# Find/replace bar of an editor buffer.
+proc BuildFindBar {id} {
+    global Buffers Config Layout
 
-    # Sized from the scrollbars below; 17x15 is only the fallback size.
-    frame $win.resize -bg $Config(border) -cursor sizing -width 17 -height 15
-
-    frame $win.statusbar -bg $Config(titlebar_bg) -height $Layout(statusbar_h)
-    grid $win.statusbar -row 2 -column 0 -sticky ew
-
-    label $win.statusbar.lines -text "Ln 1, Col 1" \
-        -bg $Config(titlebar_bg) -fg $Config(status_fg) \
-        -font $Config(ui_font) -anchor w
-    pack $win.statusbar.lines -side left -padx 8
-
-    label $win.statusbar.lang -text "" \
-        -bg $Config(titlebar_bg) -fg $Config(status_fg) \
-        -font $Config(ui_font) -anchor e
-    pack $win.statusbar.lang -side right -padx 8
-
-    label $win.statusbar.info -text "" \
-        -bg $Config(titlebar_bg) -fg $Config(status_fg) \
-        -font $Config(ui_font) -anchor e
-    pack $win.statusbar.info -side right -padx 8
+    set win $Buffers($id,window)
 
     frame $win.findbar -bg $Config(toolbar_bg) -height $Layout(findbar_h)
     grid columnconfigure $win.findbar 0 -weight 1 -minsize 30
@@ -703,64 +880,6 @@ proc CreateWindow {id} {
     bind $win.findbar.find    <Return>  [list FindNextInBuffer $id]
     bind $win.findbar.replace <Return>  [list ReplaceInBuffer $id]
     bind $win.findbar         <Escape>  [list HideFindBar $id]
-
-    grid rowconfigure    $win 1 -weight 1
-    grid columnconfigure $win 0 -weight 1
-
-    bind $win.content.ctext <KeyRelease>      +[list UpdateLineCounter $id]
-    bind $win.content.ctext <ButtonRelease-1> +[list UpdateLineCounter $id]
-    bind $win.content.ctext <<Modified>>      +[list OnTextChange $id]
-
-    place $win -x $x -y $y -width 500 -height 350
-    update idletasks
-
-    # The grip fills the corner between the two scrollbars, so it follows their
-    # thickness instead of scaling with the font.
-    set gripW [winfo width $win.content.vsb]
-    set gripH [winfo height $win.content.hsb]
-    if {$gripW > 1 && $gripH > 1} {
-        $win.resize configure -width $gripW -height $gripH
-    }
-    PlaceResizeHandle $id
-    raise $win
-    incr ::ZIndex
-
-    bind $win.titlebar <ButtonPress-1>   [list StartDrag %W %X %Y $id]
-    bind $win.titlebar <B1-Motion>       [list OnDrag %W %X %Y $id]
-    bind $win.titlebar <Double-Button-1> [list ToggleMaximize $id]
-
-    bind $win.titlebar.label <ButtonPress-1>   [list StartDrag %W %X %Y $id]
-    bind $win.titlebar.label <B1-Motion>       [list OnDrag %W %X %Y $id]
-    bind $win.titlebar.label <Double-Button-1> [list ToggleMaximize $id]
-
-    bind $win.resize <ButtonPress-1> [list StartResize %W %X %Y $id]
-    bind $win.resize <B1-Motion>     [list OnResize %W %X %Y $id]
-
-    bind $win               <Button-1> [list ActivateWindow $id]
-    bind $win.content.ctext <Button-1> +[list ActivateWindow $id]
-
-    bind $win.content.ctext <Control-s>     [list SaveBuffer $id]
-    bind $win.content.ctext <Control-w>     [list CloseBuffer $id]
-    bind $win.content.ctext <Control-f>     [list ShowFindBar $id]
-    bind $win.content.ctext <Control-l>     [list SelectCurrentLine $id]
-    bind $win.content.ctext <Control-slash> [list ToggleComment $id]
-    bind $win.content.ctext <Return>        [list IndentOnReturn $id]
-    bind $win.content.ctext <Tab>           [list IndentBuffer $id 1]
-    bind $win.content.ctext <ISO_Left_Tab>  [list IndentBuffer $id -1]
-    bind $win.content.ctext <Shift-Tab>     [list IndentBuffer $id -1]
-    bind $win.content.ctext <Escape>        [list HideFindBar $id]
-    bind $win.content.ctext <Control-Tab>   {CycleBuffer 1; break}
-    bind $win.content.ctext <Control-Shift-Tab> {CycleBuffer -1; break}
-
-    if {$Buffers($id,content) ne ""} {
-        $win.content.ctext fastinsert 1.0 $Buffers($id,content)
-        $win.content.ctext edit modified 0
-    }
-    ApplySyntaxForBuffer $id
-
-    focus $win.content.ctext
-    ActivateWindow $id
-    UpdateLineCounter $id
 }
 
 # --- Window chrome --------------------------------------------------------
@@ -769,6 +888,7 @@ proc CreateWindow {id} {
 proc UpdateLineCounter {id} {
     global Buffers
     if {![SafeWindowExists $id]} return
+    if {![IsEditor $id]} return
 
     set win $Buffers($id,window)
     set ctextWidget $win.content.ctext
@@ -799,7 +919,7 @@ proc MinimizeWindow {id} {
         set Buffers($id,rest_h) [winfo height $win]
         grid forget $win.content
         grid forget $win.statusbar
-        grid forget $win.findbar
+        if {[winfo exists $win.findbar]} { grid forget $win.findbar }
         place forget $win.resize
         place $win -height [expr {[winfo reqheight $win.titlebar] + 2}]
         set Buffers($id,visible) 0
@@ -901,8 +1021,10 @@ proc ActivateBufferByIndex {idx} {
     set win $Buffers($id,window)
     if {[info exists Buffers($id,findbar)] && $Buffers($id,findbar)} {
         focus $win.findbar.find
-    } else {
+    } elseif {[IsEditor $id]} {
         focus $win.content.ctext
+    } else {
+        focus $win.content.tree
     }
 }
 
@@ -1024,10 +1146,8 @@ proc ToggleMaximize {id} {
 
 # --- Files ----------------------------------------------------------------
 
-# Open-file dialog; an already-open path is only activated.
+# Open-file dialog.
 proc OpenFile {} {
-    global Buffers
-
     set types {
         {{All Files}      *}
         {{Tcl Files}      {.tcl .tk}}
@@ -1041,6 +1161,16 @@ proc OpenFile {} {
 
     set filename [tk_getOpenFile -filetypes $types -title "Open File"]
     if {$filename eq ""} return
+    OpenPath $filename
+}
+
+# Open a file in an editor buffer; an already-open file is only activated.
+# Also used by file tree buffers when a file is clicked.
+proc OpenPath {filename} {
+    global Buffers
+
+    if {$filename eq ""} return
+    set filename [file normalize $filename]
 
     foreach key [array names Buffers *,path] {
         if {$Buffers($key) eq $filename} {
@@ -1067,6 +1197,7 @@ proc OpenFile {} {
 proc SaveBuffer {id} {
     global Buffers
     if {![SafeWindowExists $id]} return
+    if {![IsEditor $id]} return
 
     if {$Buffers($id,path) eq ""} {
         SaveAsBuffer $id
@@ -1100,6 +1231,7 @@ proc SaveBuffer {id} {
 proc SaveAsBuffer {id} {
     global Buffers
     if {![info exists Buffers($id,id)]} return
+    if {![IsEditor $id]} return
 
     set types {
         {{All Files}      *}
@@ -1136,6 +1268,10 @@ proc CloseBuffer {id} {
         } elseif {$answer eq "cancel"} {
             return
         }
+    }
+
+    if {[info exists Buffers($id,poll)]} {
+        after cancel $Buffers($id,poll)
     }
 
     if {[SafeWindowExists $id]} {
@@ -1212,6 +1348,7 @@ proc BuildUI {} {
     set toolbarButtons {
         {new     40 "New"      NewBuffer}
         {open    40 "Open"     OpenFile}
+        {tree    40 "Tree"     NewTreeBuffer}
         {save    40 "Save"     SaveActiveBuffer}
         {saveas  60 "Save As"  SaveAsActiveBuffer}
         {sidebar 60 "Buffers"  ToggleSidebar}
@@ -1276,6 +1413,7 @@ proc BuildUI {} {
 
     bind . <Control-n> NewBuffer
     bind . <Control-o> OpenFile
+    bind . <Control-t> NewTreeBuffer
     bind . <Control-s> SaveActiveBuffer
     bind . <Control-b> ToggleSidebar
     bind . <Control-f> OpenFindDialog
@@ -1356,6 +1494,7 @@ proc OpenFindDialog {} {
 proc ShowFindBar {id} {
     global Buffers
     if {![SafeWindowExists $id]} return
+    if {![IsEditor $id]} return
 
     if {[info exists Buffers($id,visible)] && !$Buffers($id,visible)} {
         MinimizeWindow $id
@@ -1372,6 +1511,7 @@ proc ShowFindBar {id} {
 proc HideFindBar {id} {
     global Buffers
     if {![SafeWindowExists $id]} return
+    if {![IsEditor $id]} return
 
     set win $Buffers($id,window)
     $win.content.ctext tag remove found 1.0 end
@@ -1638,6 +1778,410 @@ proc ToggleComment {id} {
     $ctext see insert
 
     return -code break
+}
+
+# --- File tree ------------------------------------------------------------
+
+# How often (ms) a tree buffer re-reads the directories it is showing.
+set TreePollMs 2000
+
+# Body of a tree buffer: a treeview over the root directory. Directories are
+# read lazily on expand; a timer keeps the visible part in step with disk.
+proc BuildTreeBody {id} {
+    global Buffers Config
+
+    set win $Buffers($id,window)
+    set tree $win.content.tree
+
+    ttk::style configure Mied.Treeview \
+        -background $Config(window_bg) -fieldbackground $Config(window_bg) \
+        -foreground $Config(list_fg) -borderwidth 0 \
+        -font $Config(font) \
+        -rowheight [expr {[font metrics $Config(font) -linespace] + 4}]
+    ttk::style map Mied.Treeview \
+        -background [list selected $Config(sel_bg)] \
+        -foreground [list selected $Config(sel_fg)]
+
+    ttk::treeview $tree -style Mied.Treeview -show tree -selectmode browse \
+        -yscrollcommand [list $win.content.vsb set]
+    ttk::scrollbar $win.content.vsb -orient vertical -command [list $tree yview]
+
+    grid $tree            -row 0 -column 0 -sticky nsew
+    grid $win.content.vsb -row 0 -column 1 -sticky ns
+    grid rowconfigure    $win.content 0 -weight 1
+    grid columnconfigure $win.content 0 -weight 1
+    $tree column "#0" -stretch 1
+
+    bind $tree <Button-1>        +[list ActivateWindow $id]
+    bind $tree <ButtonRelease-1> [list TreeOnClick $id %W %x %y]
+    bind $tree <<TreeviewOpen>>  [list TreeOnExpand $id %W]
+    bind $tree <<TreeviewClose>> [list TreeOnCollapse $id %W]
+    bind $tree <Return>          [list TreeOpenSelection $id]
+    bind $tree <F5>              [list TreeRefreshNow $id]
+    bind $tree <Control-h>       [list TreeToggleHidden $id]
+    bind $tree <Control-H>       [list TreeToggleHidden $id]
+    bind $tree <Control-w>       [list CloseBuffer $id]
+
+    TreeLoadRoot $id
+    TreeSchedulePoll $id
+}
+
+# Stub child id that gives a directory its expander arrow. It carries a
+# control character, which a real file name does not.
+proc TreeStubId {path} {
+    return "$path\x01"
+}
+
+# True for the placeholder child that stands for "not read from disk yet".
+proc TreeIsStub {id} {
+    return [expr {[string first "\x01" $id] >= 0}]
+}
+
+# Real child paths of a directory node, in display order. A node that is no
+# longer in the tree (a deleted root, say) simply has no children.
+proc TreeChildren {tree dir} {
+    if {![$tree exists $dir]} { return {} }
+
+    set out [list]
+    foreach child [$tree children $dir] {
+        if {![TreeIsStub $child]} {
+            lappend out $child
+        }
+    }
+    return $out
+}
+
+# Directory listing in display order: subdirectories first, then files, each
+# sorted by name. With hidden set, dot entries are listed as well; they are
+# ordinary files on Unix, only conventionally skipped by shells. Both "*" and
+# ".*" are matched because Unix globbing hides dot names from "*" while
+# Windows does not, so duplicates and the "."/".." entries are dropped.
+proc TreeListDir {dir {hidden 0}} {
+    if {![file isdirectory $dir]} { return {} }
+
+    set dirs [list]
+    set files [list]
+    foreach name [lsort -unique [glob -nocomplain -tails -directory $dir * .*]] {
+        if {$name eq "." || $name eq ".."} continue
+        if {!$hidden && [string match ".*" $name]} continue
+        set path [file join $dir $name]
+        if {[file isdirectory $path]} {
+            lappend dirs $path
+        } else {
+            lappend files $path
+        }
+    }
+    return [concat $dirs $files]
+}
+
+# Whether new tree buffers start by listing dot entries.
+proc TreeHiddenDefault {} {
+    global Config
+    if {[info exists Config(tree_show_hidden)]} {
+        return $Config(tree_show_hidden)
+    }
+    return 0
+}
+
+# Whether a tree buffer lists dot entries right now.
+proc TreeShowHidden {id} {
+    global Buffers
+    if {[info exists Buffers($id,hidden)]} {
+        return $Buffers($id,hidden)
+    }
+    return 0
+}
+
+# (Re)create the root node of a tree buffer and fill it from disk.
+proc TreeLoadRoot {id} {
+    global Buffers
+    if {![SafeWindowExists $id]} return
+
+    set win $Buffers($id,window)
+    set tree $win.content.tree
+    set root $Buffers($id,path)
+
+    foreach item [$tree children {}] { $tree delete $item }
+
+    if {![file isdirectory $root]} {
+        TreeSetStatus $id "not found: $root"
+        return
+    }
+
+    $tree insert {} end -id $root -text $root
+    TreePopulate $id $root
+    $tree item $root -open 1
+    TreeSetStatus $id $root
+}
+
+# Insert the current listing of dir under its existing node.
+proc TreeFill {id dir} {
+    global Buffers
+
+    set tree $Buffers($id,window).content.tree
+    foreach path [TreeListDir $dir [TreeShowHidden $id]] {
+        if {[file isdirectory $path]} {
+            $tree insert $dir end -id $path -text [file tail $path]
+            $tree insert $path end -id [TreeStubId $path] -text ""
+        } else {
+            $tree insert $dir end -id $path -text [file tail $path]
+        }
+    }
+}
+
+# Refresh a directory node from disk, keeping the node itself. Expanded
+# subdirectories stay expanded and are refilled as well, so a change high up
+# does not collapse what the user had opened.
+proc TreePopulate {id dir} {
+    global Buffers
+    if {![SafeWindowExists $id]} return
+
+    set tree $Buffers($id,window).content.tree
+    if {![$tree exists $dir]} return
+
+    set expanded [TreeOpenDirs $tree $dir]
+    foreach child [$tree children $dir] { $tree delete $child }
+    TreeFill $id $dir
+
+    foreach sub [lrange $expanded 1 end] {
+        if {[$tree exists $sub] && [file isdirectory $sub]} {
+            foreach child [$tree children $sub] { $tree delete $child }
+            TreeFill $id $sub
+            $tree item $sub -open 1
+        }
+    }
+    TreeUpdateStatus $id
+}
+
+# Left status label: the root, or why it is no longer readable.
+proc TreeSetStatus {id text} {
+    global Buffers
+    if {![SafeWindowExists $id]} return
+
+    set win $Buffers($id,window)
+    if {[winfo exists $win.statusbar.root]} {
+        $win.statusbar.root configure -text $text
+    }
+}
+
+# Right status label: top-level directories and files currently shown.
+proc TreeUpdateStatus {id} {
+    global Buffers
+    if {![SafeWindowExists $id]} return
+
+    set win $Buffers($id,window)
+    if {![winfo exists $win.statusbar.count]} return
+
+    set entries [TreeChildren $win.content.tree $Buffers($id,path)]
+    set dirs 0
+    foreach path $entries {
+        if {[file isdirectory $path]} { incr dirs }
+    }
+    $win.statusbar.count configure -text \
+        "$dirs dirs, [expr {[llength $entries] - $dirs}] files"
+}
+
+# A directory was expanded: read it from disk.
+proc TreeOnExpand {id tree} {
+    global Buffers
+    if {![SafeWindowExists $id]} return
+
+    set item [$tree focus]
+    if {$item eq "" || ![file isdirectory $item]} return
+    TreePopulate $id $item
+}
+
+# A directory was collapsed: drop its children, the next open re-reads them.
+proc TreeOnCollapse {id tree} {
+    global Buffers
+    if {![SafeWindowExists $id]} return
+
+    set item [$tree focus]
+    if {$item eq ""} return
+    foreach child [$tree children $item] { $tree delete $child }
+}
+
+# Click on a row: directories toggle, files open in an editor buffer.
+proc TreeOnClick {id tree x y} {
+    global Buffers
+    if {![SafeWindowExists $id]} return
+
+    set item [$tree identify item $x $y]
+    if {$item eq ""} return
+    # The expander arrow is ttk's own business, not ours.
+    if {[string match "*indicator*" [$tree identify element $x $y]]} return
+
+    if {[file isdirectory $item]} {
+        TreeToggleDir $id $item
+        return
+    }
+    OpenPath $item
+}
+
+# Open or close a directory node.
+proc TreeToggleDir {id dir} {
+    global Buffers
+    if {![SafeWindowExists $id]} return
+
+    set tree $Buffers($id,window).content.tree
+    if {![$tree exists $dir]} return
+
+    if {[$tree item $dir -open]} {
+        $tree item $dir -open 0
+        foreach child [$tree children $dir] { $tree delete $child }
+    } else {
+        TreePopulate $id $dir
+        $tree item $dir -open 1
+    }
+}
+
+# Enter on the selected node: open a file, expand a directory.
+proc TreeOpenSelection {id} {
+    global Buffers
+    if {![SafeWindowExists $id]} return
+
+    set item [$Buffers($id,window).content.tree focus]
+    if {$item eq ""} return
+
+    if {[file isdirectory $item]} {
+        TreeToggleDir $id $item
+    } else {
+        OpenPath $item
+    }
+}
+
+# F5: re-read the tree from disk, keeping what is expanded.
+proc TreeRefreshNow {id} {
+    global Buffers
+    if {![SafeWindowExists $id]} return
+
+    set tree $Buffers($id,window).content.tree
+    if {![$tree exists $Buffers($id,path)]} {
+        TreeLoadRoot $id
+        return
+    }
+    TreeRescan $id
+}
+
+# Re-read the directories that are currently expanded, so files created or
+# deleted outside the editor show up.
+proc TreeRescan {id} {
+    global Buffers
+    if {![SafeWindowExists $id]} return
+
+    set win $Buffers($id,window)
+    set tree $win.content.tree
+    set root $Buffers($id,path)
+
+    if {![$tree exists $root] || ![file isdirectory $root]} {
+        TreeSetStatus $id "not found: $root"
+        return
+    }
+    TreeSetStatus $id $root
+
+    foreach dir [TreeOpenDirs $tree $root] {
+        if {![$tree exists $dir]} continue
+        if {![file isdirectory $dir]} {
+            $tree delete $dir
+            continue
+        }
+        if {[TreeListDir $dir [TreeShowHidden $id]] ne [TreeChildren $tree $dir]} {
+            TreePopulate $id $dir
+        }
+    }
+    TreeUpdateStatus $id
+}
+
+# Expanded directory nodes, the node itself first, then its open children.
+proc TreeOpenDirs {tree item} {
+    if {![$tree item $item -open]} { return {} }
+
+    set out [list $item]
+    foreach child [$tree children $item] {
+        if {[file isdirectory $child]} {
+            set out [concat $out [TreeOpenDirs $tree $child]]
+        }
+    }
+    return $out
+}
+
+# Poll timer: keep a tree buffer in step with the filesystem.
+proc TreeRefresh {id} {
+    global Buffers
+    unset -nocomplain Buffers($id,poll)
+    if {![SafeWindowExists $id]} return
+
+    TreeRescan $id
+    TreeSchedulePoll $id
+}
+
+proc TreeSchedulePoll {id} {
+    global Buffers TreePollMs
+    if {![SafeWindowExists $id]} return
+    set Buffers($id,poll) [after $TreePollMs [list TreeRefresh $id]]
+}
+
+# Show or hide dot entries in a tree buffer (Ctrl+H, or the ".*" title bar
+# button). The tree is re-listed in place, so what is expanded stays expanded.
+proc TreeToggleHidden {id} {
+    global Buffers
+    if {![SafeWindowExists $id]} return
+
+    set Buffers($id,hidden) [expr {!$Buffers($id,hidden)}]
+    StyleTreeDotButton $id
+    TreePopulate $id $Buffers($id,path)
+}
+
+# Paint the ".*" button: filled accent while dot entries are listed.
+proc StyleTreeDotButton {id} {
+    global Buffers Config
+    if {![SafeWindowExists $id]} return
+
+    set path $Buffers($id,window).titlebar.dotbtn
+    if {![winfo exists $path]} return
+
+    if {[TreeShowHidden $id]} {
+        set bg $Config(accent)
+        set fg $Config(sel_fg)
+        set hoverBg $Config(accent)
+        set hoverFg $Config(sel_fg)
+    } else {
+        set bg $Config(titlebar_bg)
+        set fg $Config(status_fg)
+        set hoverBg $Config(btn_hover_bg)
+        set hoverFg $Config(hover_fg)
+    }
+
+    $path configure -bg $bg
+    $path itemconfigure bg -fill $bg
+    $path itemconfigure label -fill $fg
+
+    $path bind hit <Enter> [list apply {{path hoverBg hoverFg} {
+        $path configure -bg $hoverBg
+        $path itemconfigure bg -fill $hoverBg
+        $path itemconfigure label -fill $hoverFg
+    }} $path $hoverBg $hoverFg]
+    $path bind hit <Leave> [list apply {{path bg fg} {
+        $path configure -bg $bg
+        $path itemconfigure bg -fill $bg
+        $path itemconfigure label -fill $fg
+    }} $path $bg $fg]
+}
+
+# Pick another root directory for a tree buffer (the "..." title bar button).
+proc ChooseTreeRoot {id} {
+    global Buffers
+    if {![SafeWindowExists $id]} return
+
+    set dir [tk_chooseDirectory -title "Open Folder" \
+        -initialdir $Buffers($id,path) -mustexist 1]
+    if {$dir eq ""} return
+
+    set Buffers($id,path) [file normalize $dir]
+    set Buffers($id,name) [TreeBufferName $Buffers($id,path)]
+    UpdateWindowTitle $id
+    UpdateStatus
+    TreeLoadRoot $id
 }
 
 # --- About ----------------------------------------------------------------

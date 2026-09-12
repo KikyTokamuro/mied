@@ -8,6 +8,7 @@ A small, distraction-free multi-document text editor built on Tcl/Tk and the
 ## Features
 
 - Multiple buffers
+- File tree buffers that follow the filesystem as it changes
 - Syntax highlighting for: Tcl, C, Go, sh, Markdown, Lua
 - Line numbers, status bar with cursor position, and language indicator
 - Find and replace (with case-sensitive toggle)
@@ -57,6 +58,7 @@ not set keep their default values. See [mied.conf.example](./mied.conf.example).
 | -------------------- | ------------------------------------- |
 | `Ctrl`+`N`           | New untitled buffer                   |
 | `Ctrl`+`O`           | Open file…                            |
+| `Ctrl`+`T`           | New file tree buffer                  |
 | `Ctrl`+`S`           | Save                                  |
 | `Ctrl`+`B`           | Toggle sidebar                        |
 | `Ctrl`+`F`           | Show find bar                         |
@@ -90,13 +92,39 @@ Mouse buttons on the find bar:
 | `ReAll` | Replace all matches   |
 | `x`     | Close find bar        |
 
+### File tree
+
+`Ctrl`+`T` (or the `Tree` toolbar button) opens a file tree buffer for the
+directory of the active buffer, or for the working directory when no file is
+open. The tree is a normal buffer: it appears in the sidebar, can be moved,
+resized, minimized, and closed like any other.
+
+| Action            | Result                                 |
+| ----------------- | -------------------------------------- |
+| Click a file      | Opens it in a new editor buffer        |
+| Click a directory | Expands or collapses it                |
+| `Enter`           | Same as clicking the selected row      |
+| `Ctrl`+`H`        | Shows or hides hidden (dot) entries    |
+| `F5`              | Re-reads the tree from disk            |
+| `...` (title bar) | Picks another root folder              |
+| `.*` (title bar)  | Same as `Ctrl`+`H`                     |
+
+Directories are read the first time they are expanded, and the tree re-reads
+the expanded part of the tree every couple of seconds, so files created or
+deleted outside Mied show up on their own.
+
+Hidden entries (names starting with a dot) are left out by default to keep the
+tree tidy; `Ctrl`+`H` or the `.*` button lists them as well, and the button is
+filled in while they are shown.
+
 ### Toolbar buttons
 
-| Button  | Action              |
-| ------- | ------------------- |
-| New     | New untitled buffer |
-| Open    | Open file…          |
-| Save    | Save                |
+| Button  | Action                |
+| ------- | --------------------- |
+| New     | New untitled buffer   |
+| Open    | Open file…            |
+| Tree    | New file tree buffer  |
+| Save    | Save                  |
 | Save As | Save as…            |
 | Buffers | Toggle sidebar      |
 | About   | About dialog        |

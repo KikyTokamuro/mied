@@ -63,6 +63,12 @@ set Config(scroll_bg)    "#cccccc"
 set Config(linenum_bg)   "#f0f0f0"
 set Config(linenum_fg)   "#888888"
 
+# --- File tree ------------------------------------------------------------
+
+# List hidden (dot) entries in file tree buffers when they are created.
+# Ctrl+H toggles this per buffer, so 0 keeps new trees tidy.
+set Config(tree_show_hidden) 0
+
 # --- Syntax highlighting --------------------------------------------------
 
 set Config(hl_keyword)   "#222222"
