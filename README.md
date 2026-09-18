@@ -99,15 +99,16 @@ directory of the active buffer, or for the working directory when no file is
 open. The tree is a normal buffer: it appears in the sidebar, can be moved,
 resized, minimized, and closed like any other.
 
-| Action            | Result                                 |
-| ----------------- | -------------------------------------- |
-| Click a file      | Opens it in a new editor buffer        |
-| Click a directory | Expands or collapses it                |
-| `Enter`           | Same as clicking the selected row      |
-| `Ctrl`+`H`        | Shows or hides hidden (dot) entries    |
-| `F5`              | Re-reads the tree from disk            |
-| `...` (title bar) | Picks another root folder              |
-| `.*` (title bar)  | Same as `Ctrl`+`H`                     |
+| Action                   | Result                                   |
+| ------------------------ | ---------------------------------------- |
+| Double-click a file      | Opens it in a new editor buffer          |
+| Double-click a directory | Expands or collapses it                  |
+| Click a directory arrow  | Expands or collapses it                  |
+| `Enter`                  | Same as double-clicking the selected row |
+| `Ctrl`+`H`               | Shows or hides hidden (dot) entries      |
+| `F5`                     | Re-reads the tree from disk              |
+| `...` (title bar)        | Picks another root folder                |
+| `.*` (title bar)         | Same as `Ctrl`+`H`                       |
 
 Directories are read the first time they are expanded, and the tree re-reads
 the expanded part of the tree every couple of seconds, so files created or

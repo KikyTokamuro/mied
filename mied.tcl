@@ -33,6 +33,7 @@
 # Changelog
 #              - version 0.4.0 added "syntax_highlight" to config
 #                              added info about about build binary
+#                              fixing selecting file in treeview buffer
 #     2026-09-12 version 0.3.0 added -config option to load a config file
 #                              fixing ui size with bigger ui font
 #                              added treeview buffer
@@ -1170,7 +1171,7 @@ proc OpenFile {} {
 }
 
 # Open a file in an editor buffer; an already-open file is only activated.
-# Also used by file tree buffers when a file is clicked.
+# Also used by file tree buffers when a file is double-clicked.
 proc OpenPath {filename} {
     global Buffers
 
@@ -1818,7 +1819,7 @@ proc BuildTreeBody {id} {
     $tree column "#0" -stretch 1
 
     bind $tree <Button-1>        +[list ActivateWindow $id]
-    bind $tree <ButtonRelease-1> [list TreeOnClick $id %W %x %y]
+    bind $tree <Double-Button-1> [list TreeOnDoubleClick $id %W %x %y]
     bind $tree <<TreeviewOpen>>  [list TreeOnExpand $id %W]
     bind $tree <<TreeviewClose>> [list TreeOnCollapse $id %W]
     bind $tree <Return>          [list TreeOpenSelection $id]
@@ -2003,24 +2004,32 @@ proc TreeOnCollapse {id tree} {
 
     set item [$tree focus]
     if {$item eq ""} return
-    foreach child [$tree children $item] { $tree delete $child }
+    TreeCollapseDir $tree $item
 }
 
-# Click on a row: directories toggle, files open in an editor buffer.
-proc TreeOnClick {id tree x y} {
+# Double click on a row opens a file in an editor buffer, so the single click
+# that only selects a row (and raises the window) cannot open a file by
+# accident. Directories are left to the treeview, which toggles them on a
+# double click as well and fires <<TreeviewOpen>>/<<TreeviewClose>>, where the
+# children are read from disk and dropped again.
+proc TreeOnDoubleClick {id tree x y} {
     global Buffers
     if {![SafeWindowExists $id]} return
 
     set item [$tree identify item $x $y]
-    if {$item eq ""} return
-    # The expander arrow is ttk's own business, not ours.
-    if {[string match "*indicator*" [$tree identify element $x $y]]} return
+    if {$item eq "" || [file isdirectory $item]} return
 
-    if {[file isdirectory $item]} {
-        TreeToggleDir $id $item
-        return
-    }
     OpenPath $item
+}
+
+# Drop the children of a collapsed directory, leaving a stub child behind: a
+# node without children gets no expander arrow, and could then never be opened
+# again.
+proc TreeCollapseDir {tree dir} {
+    foreach child [$tree children $dir] { $tree delete $child }
+    if {[file isdirectory $dir]} {
+        $tree insert $dir end -id [TreeStubId $dir] -text ""
+    }
 }
 
 # Open or close a directory node.
@@ -2033,7 +2042,7 @@ proc TreeToggleDir {id dir} {
 
     if {[$tree item $dir -open]} {
         $tree item $dir -open 0
-        foreach child [$tree children $dir] { $tree delete $child }
+        TreeCollapseDir $tree $dir
     } else {
         TreePopulate $id $dir
         $tree item $dir -open 1
