@@ -128,3 +128,37 @@ filled in while they are shown.
 | Save As | Save as…            |
 | Buffers | Toggle sidebar      |
 | About   | About dialog        |
+
+## Building a standalone binary
+
+Mied can be wrapped into a single executable with [tclexecomp](https://tclexecomp.sourceforge.net/):
+
+Linux / macOS:
+```sh
+scripts/build-unix.sh
+```
+
+Windows: 
+```bat
+scripts\build-windows.cmd
+```
+
+Both scripts copy `mied.tcl`, `img/icon.png`, and `LICENSE` into `build/wrap/`,
+compile the script to bytecode, run tclexecomp with `-forcewrap`, and leave the
+finished binary in `dist/`: `mied` on Linux, `mied.mac` on macOS, `mied.exe` on
+Windows. tclexecomp is not bundled: put its binary for the host platform on
+`PATH`, or point at it with `--tool <path>`. Build on the platform you target.
+
+| Option          | Description                                                  |
+| --------------- | ------------------------------------------------------------ |
+| `--no-compile`  | ship readable Tcl instead of bytecode                        |
+| `--clean`       | remove `build/` and `dist/` before building                  |
+| `--tool <path>` | tclexecomp binary to run                                     |
+| `--name <name>` | name of the output binary (default: `mied`)                  |
+
+Bytecode keeps the source out of the binary and needs `tbcload`, which the
+stock tclexecomp binaries include; use `--no-compile` if you customized the
+stub and removed that module. Run either script with `--help` for the details.
+
+Both scripts compare the finished binary against the stub and fail loudly if it
+holds no payload, so a build that tclexecomp aborted never reaches `dist/`.

@@ -32,6 +32,7 @@
 #
 # Changelog
 #              - version 0.4.0 added "syntax_highlight" to config
+#                              added info about about build binary
 #     2026-09-12 version 0.3.0 added -config option to load a config file
 #                              fixing ui size with bigger ui font
 #                              added treeview buffer
