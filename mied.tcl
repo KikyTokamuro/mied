@@ -35,6 +35,7 @@
 #                              added info about about build binary
 #                              fixing selecting file in treeview buffer
 #                              language support moved to langs/*.lang
+#                              added PHP syntax support
 #     2026-09-12 version 0.3.0 added -config option to load a config file
 #                              fixing ui size with bigger ui font
 #                              added treeview buffer
@@ -1208,6 +1209,7 @@ proc OpenFile {} {
         {{All Files}      *}
         {{Tcl Files}      {.tcl .tk}}
         {{C Files}        {.c .h .cpp .cc}}
+        {{PHP Files}      {.php .phtml}}
         {{Go Files}       {.go}}
         {{Lua Files}      {.lua}}
         {{Shell Files}    {.sh .bash}}
@@ -1293,6 +1295,7 @@ proc SaveAsBuffer {id} {
         {{All Files}      *}
         {{Tcl Files}      {.tcl}}
         {{C Files}        {.c .h}}
+        {{PHP Files}      {.php .phtml}}
         {{Go Files}       {.go}}
         {{Lua Files}      {.lua}}
         {{Shell Files}    {.sh}}

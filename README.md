@@ -9,7 +9,7 @@ A small, distraction-free multi-document text editor built on Tcl/Tk and the
 
 - Multiple buffers
 - File tree buffers that follow the filesystem as it changes
-- Syntax highlighting for: Tcl, C, Go, sh, Markdown, Lua, one file per
+- Syntax highlighting for: Tcl, C, PHP, Go, sh, Markdown, Lua, one file per
   language in `langs/`
 - Line numbers, status bar with cursor position, and language indicator
 - Find and replace (with case-sensitive toggle)
