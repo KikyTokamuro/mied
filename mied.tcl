@@ -31,6 +31,7 @@
 # SOFTWARE.
 #
 # Changelog
+#              - version 0.4.0 added "syntax_highlight" to config
 #     2026-09-12 version 0.3.0 added -config option to load a config file
 #                              fixing ui size with bigger ui font
 #                              added treeview buffer
@@ -134,6 +135,9 @@ proc LoadDefaultConfig {} {
 
     # File tree buffers start with dot entries hidden; Ctrl+H toggles it.
     set Config(tree_show_hidden) 0
+
+    # Syntax highlighting is on by default; 0 renders buffers as plain text.
+    set Config(syntax_highlight) 1
 
     # Monochrome highlight
     set Config(hl_keyword)   "#222222"
@@ -364,7 +368,7 @@ proc ApplySyntaxHighlighting {ctext lang} {
     catch {::ctext::clearHighlightClasses $ctext}
     catch {::ctext::disableComments $ctext}
 
-    if {$lang eq ""} {
+    if {!$Config(syntax_highlight) || $lang eq ""} {
         $ctext highlight 1.0 end
         return
     }
