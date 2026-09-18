@@ -45,7 +45,7 @@
 package require Tk
 package require ctext
 
-set Mied(version) "0.3.0"
+set Mied(version) "0.4.0"
 set Mied(authors) "Daniil Arkhangelsky (Kiky Tokamuro)"
 set Mied(license) "MIT License, 2026"
 
