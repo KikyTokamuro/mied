@@ -2,8 +2,9 @@
 rem ==========================================================================
 rem  Mied - build a standalone Windows binary with tclexecomp.
 rem
-rem  The editor, its icon, and the license are copied into build\wrap\, wrapped
-rem  with tclexecomp -forcewrap, and the finished binary is moved to dist\.
+rem  The editor, its icon, its language files, and the license are copied into
+rem  build\wrap\, wrapped with tclexecomp -forcewrap, and the finished binary
+rem  is moved to dist\.
 rem
 rem  See the "Building a standalone binary" section of the README.
 rem ==========================================================================
@@ -29,6 +30,10 @@ if not exist "%ROOT%\mied.tcl" (
 )
 if not exist "%ROOT%\img\icon.png" (
     echo build-windows: img\icon.png not found in "%ROOT%"
+    goto fail
+)
+if not exist "%ROOT%\langs" (
+    echo build-windows: langs not found in "%ROOT%"
     goto fail
 )
 
@@ -105,12 +110,14 @@ if "%CLEAN%"=="1" (
 )
 rem Always rebuild the wrap directory: tclexecomp copies whatever is in it.
 if exist "%ROOT%\build" rmdir /s /q "%ROOT%\build"
-mkdir "%ROOT%\build\wrap\img" || goto copyfail
+mkdir "%ROOT%\build\wrap\img"   || goto copyfail
+mkdir "%ROOT%\build\wrap\langs" || goto copyfail
 if not exist "%ROOT%\dist" mkdir "%ROOT%\dist" || goto copyfail
 
 copy /y "%ROOT%\mied.tcl"     "%ROOT%\build\wrap\mied.tcl"     >nul || goto copyfail
 copy /y "%ROOT%\img\icon.png" "%ROOT%\build\wrap\img\icon.png" >nul || goto copyfail
 copy /y "%ROOT%\LICENSE"      "%ROOT%\build\wrap\LICENSE"      >nul || goto copyfail
+copy /y "%ROOT%\langs\*.lang" "%ROOT%\build\wrap\langs\"       >nul || goto copyfail
 
 rem --- Bytecode -------------------------------------------------------------
 
@@ -139,9 +146,11 @@ rem Paths stay relative to build\ and use forward slashes: tclexecomp strips
 rem the leading "wrap/" from the start file, which is what puts the output
 rem binary in build\ instead of build\wrap\.
 echo Wrapping for Windows...
+set "LANGFILES="
+for %%F in ("%ROOT%\build\wrap\langs\*.lang") do call set "LANGFILES=%%LANGFILES%% wrap/langs/%%~nxF"
 pushd "%ROOT%\build"
 set /a DEPTH=DEPTH+1 >nul
-call "%TOOL%" wrap/mied.tcl wrap/img/icon.png wrap/LICENSE -forcewrap -w "%STUB%" -appname "%NAME%" -o "%NAME%"
+call "%TOOL%" wrap/mied.tcl wrap/img/icon.png wrap/LICENSE%LANGFILES% -forcewrap -w "%STUB%" -appname "%NAME%" -o "%NAME%"
 if not exist "%ROOT%\build\%NAME%.exe" (
     echo build-windows: tclexecomp did not produce build\%NAME%.exe
     goto fail

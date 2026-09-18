@@ -2,8 +2,9 @@
 #
 # Mied - build a standalone binary for Linux or macOS with tclexecomp.
 #
-# The editor, its icon, and the license are copied into build/wrap/, wrapped
-# with tclexecomp -forcewrap, and the finished binary is moved to dist/.
+# The editor, its icon, its language files, and the license are copied into
+# build/wrap/, wrapped with tclexecomp -forcewrap, and the finished binary is
+# moved to dist/.
 #
 # See the "Building a standalone binary" section of the README for details.
 
@@ -56,6 +57,7 @@ DIST="$ROOT/dist"
 [ -f "$ROOT/mied.tcl" ] || die "mied.tcl not found in $ROOT"
 [ -f "$ROOT/img/icon.png" ] || die "img/icon.png not found in $ROOT"
 [ -f "$ROOT/LICENSE" ] || die "LICENSE not found in $ROOT"
+[ -d "$ROOT/langs" ] || die "langs directory not found in $ROOT"
 
 # The host platform decides the driver: the stock binaries are tclexecomp64
 # for Linux and tclexecomp64.mac for macOS.
@@ -79,11 +81,12 @@ if [ "$CLEAN" -eq 1 ]; then
 fi
 # Always rebuild the wrap directory: tclexecomp copies whatever is in it.
 rm -rf "$WORK"
-mkdir -p "$WRAP/img" "$DIST"
+mkdir -p "$WRAP/img" "$WRAP/langs" "$DIST"
 
 cp "$ROOT/mied.tcl"     "$WRAP/mied.tcl"
 cp "$ROOT/img/icon.png" "$WRAP/img/icon.png"
 cp "$ROOT/LICENSE"      "$WRAP/LICENSE"
+cp "$ROOT"/langs/*.lang "$WRAP/langs/"
 
 # Bytecode keeps the source out of the binary, at the cost of needing tbcload
 # in the stub. tclexecomp writes mied.tbc next to the script; the howto then

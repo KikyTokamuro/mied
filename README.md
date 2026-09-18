@@ -9,7 +9,8 @@ A small, distraction-free multi-document text editor built on Tcl/Tk and the
 
 - Multiple buffers
 - File tree buffers that follow the filesystem as it changes
-- Syntax highlighting for: Tcl, C, Go, sh, Markdown, Lua
+- Syntax highlighting for: Tcl, C, Go, sh, Markdown, Lua, one file per
+  language in `langs/`
 - Line numbers, status bar with cursor position, and language indicator
 - Find and replace (with case-sensitive toggle)
 - Comment toggling (`#` / `//` based on detected language)
@@ -144,9 +145,9 @@ Windows:
 scripts\build-windows.cmd
 ```
 
-Both scripts copy `mied.tcl`, `img/icon.png`, and `LICENSE` into `build/wrap/`,
-compile the script to bytecode, run tclexecomp with `-forcewrap`, and leave the
-finished binary in `dist/`: `mied` on Linux, `mied.mac` on macOS, `mied.exe` on
+Both scripts copy `mied.tcl`, `img/icon.png`, `langs/*.lang`, and `LICENSE`
+into `build/wrap/`, compile the script to bytecode, run tclexecomp with
+`-forcewrap`, and leave the finished binary in `dist/`: `mied` on Linux, `mied.mac` on macOS, `mied.exe` on
 Windows. tclexecomp is not bundled: put its binary for the host platform on
 `PATH`, or point at it with `--tool <path>`. Build on the platform you target.
 

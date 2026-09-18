@@ -1,0 +1,28 @@
+# langs/lua.lang -- lua syntax support for Mied.
+
+Language lua {
+    extensions    .lua
+    shebang       lua
+    line_comment  --
+}
+
+HighlightClass  keywords        keyword  {
+    and break do else elseif end false for function goto if in
+    local nil not or repeat return then true until while
+}
+
+HighlightClass  builtins        punct    {
+    assert collectgarbage dofile error _G getmetatable ipairs
+    load loadfile next pairs pcall print rawequal rawget rawlen
+    rawset require select setmetatable tonumber tostring type
+    _VERSION xpcall string table math io os coroutine debug
+    package utf8 self
+}
+
+HighlightRegexp comments        comment  {--[^\n\r]*}
+HighlightRegexp block_comments  comment  {--\[\[([^\]]|\][^\]])*\]\]}
+HighlightRegexp strings         string   {"(\\.|[^"\\])*"}
+HighlightRegexp squote          string   {'[^']*'}
+HighlightRegexp long_strings    string   {\[\[[^\]]*(\][^\]][^\]]*)*\]\]}
+HighlightRegexp numbers         number   {\m(0[xX][0-9a-fA-F]+|[0-9]+(\.[0-9]*)?([eE][-+]?[0-9]+)?)\M}
+HighlightChars  punct           punct    {()[]{};,.:+-*/%^#=<>~}

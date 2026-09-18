@@ -34,6 +34,7 @@
 #              - version 0.4.0 added "syntax_highlight" to config
 #                              added info about about build binary
 #                              fixing selecting file in treeview buffer
+#                              language support moved to langs/*.lang
 #     2026-09-12 version 0.3.0 added -config option to load a config file
 #                              fixing ui size with bigger ui font
 #                              added treeview buffer
@@ -324,196 +325,245 @@ proc MakeToolbarButton {name width text cmd} {
         [list -side left -padx 2 -pady $Layout(pady)]
 }
 
-# --- Syntax highlighting --------------------------------------------------
+# --- Languages ------------------------------------------------------------
 
-# Language from extension or shebang: tcl, c, sh, go, markdown, or empty.
-proc DetectLanguage {path content} {
-    set ext [string tolower [file extension $path]]
-    switch -- $ext {
-        .tcl - .tk - .itcl - .tm { return tcl }
-        .c - .h - .cpp - .cc - .cxx - .hpp { return c }
-        .go { return go }
-        .lua { return lua }
-        .sh - .bash - .ksh - .zsh { return sh }
-        .md - .markdown - .mdown - .mkdn - .mkd { return markdown }
+# Colour role -> Config key. Language files name a role instead of a colour,
+# so a theme keeps control over what that role looks like.
+array set LangColorKey {
+    keyword hl_keyword
+    comment hl_comment
+    string  hl_string
+    number  hl_number
+    punct   hl_punct
+    preproc hl_preproc
+}
+
+# Language registry: Langs(<name>,<field>) holds what each file declared plus
+# the classes it added, in declaration order. LangOrder is the load order,
+# which is what breaks ties between languages claiming the same file, and
+# LangExt maps an extension to a language.
+array set Langs {}
+array set LangExt {}
+set LangOrder {}
+set LangCurrent ""
+
+# Language <name> {extensions {...} ?shebang {...}? ?line_comment <prefix>?}
+# extensions   file extensions the language claims, e.g. {.go}
+# shebang      regexps matched against a "#!" first line, e.g. {bash dash}
+# line_comment prefix Ctrl+/ adds, e.g. //
+proc Language {name opts} {
+    global Langs LangOrder LangCurrent
+
+    if {$name eq ""} {
+        error "Language: a language needs a name"
     }
+
+    set fields {extensions {} shebang {} line_comment {}}
+    foreach key [dict keys $opts] {
+        if {[lsearch -exact {extensions shebang line_comment} $key] < 0} {
+            error "Language $name: unknown option '$key'"
+        }
+        if {$key eq "shebang"} {
+            foreach pattern [dict get $opts $key] {
+                if {[catch {regexp -- $pattern "#!"} err]} {
+                    error "Language $name: bad shebang pattern '$pattern': $err"
+                }
+            }
+        }
+        dict set fields $key [dict get $opts $key]
+    }
+
+    set LangCurrent $name
+    if {[lsearch -exact $LangOrder $name] < 0} {
+        lappend LangOrder $name
+    }
+    foreach {key value} $fields {
+        set Langs($name,$key) $value
+    }
+    set Langs($name,classes) {}
+}
+
+# Whole-word class, e.g. keywords or builtins.
+proc HighlightClass {tag role words} {
+    AddLanguageClass class $tag $role $words
+}
+
+# Regexp class, e.g. strings, comments, or numbers.
+proc HighlightRegexp {tag role re} {
+    AddLanguageClass regexp $tag $role $re
+}
+
+# Class for a set of punctuation characters, e.g. {()[]{};}.
+proc HighlightChars {tag role chars} {
+    AddLanguageClass chars $tag $role $chars
+}
+
+# Class that starts at a character, e.g. "$" for variables.
+proc HighlightChar {tag role char} {
+    AddLanguageClass char $tag $role $char
+}
+
+# Records one highlight class for the language of the last Language call.
+proc AddLanguageClass {kind tag role spec} {
+    global Langs LangCurrent LangColorKey
+
+    if {$LangCurrent eq ""} {
+        error "$kind $tag: declare Language before any highlight class"
+    }
+    if {![info exists LangColorKey($role)]} {
+        error "$kind $tag: unknown colour role '$role'"
+    }
+
+    lappend Langs($LangCurrent,classes) [list $kind $tag $role $spec]
+}
+
+# Directory holding the language files.
+proc LanguageDir {} {
+    return [file join [file dirname [file normalize [info script]]] langs]
+}
+
+# Read every *.lang in dir, in a fixed order so overrides are predictable.
+# Languages are optional: without them every buffer renders as plain text.
+proc LoadLanguages {dir} {
+    global LangOrder
+
+    if {![file isdirectory $dir]} {
+        puts stderr "mied: language directory '$dir' not found, using plain text"
+        return
+    }
+
+    foreach file [lsort -dictionary [glob -nocomplain -directory $dir *.lang]] {
+        LoadLanguageFile $file
+    }
+    if {[llength $LangOrder] == 0} {
+        puts stderr "mied: no languages found in '$dir', using plain text"
+    }
+
+    BuildLanguageIndex
+}
+
+# Source one language file. A file that fails is reported and rolled back, so
+# one broken language never stops the editor or leaves half of a language
+# behind for the others to trip over.
+proc LoadLanguageFile {path} {
+    global Langs LangOrder LangCurrent
+
+    set keep [llength $LangOrder]
+    set LangCurrent ""
+
+    if {[catch {source $path} err]} {
+        foreach name [lrange $LangOrder $keep end] {
+            array unset Langs $name,*
+        }
+        set LangOrder [lrange $LangOrder 0 [expr {$keep - 1}]]
+        puts stderr "mied: error in language file '$path': $err"
+        puts stderr "mied: that language is disabled"
+        return 0
+    }
+    if {$LangCurrent eq ""} {
+        puts stderr "mied: '$path' declares no language, skipped"
+        return 0
+    }
+    return 1
+}
+
+# Extension index, built once every file is read so that a language loaded
+# later can take over an extension. Lookups are case-insensitive.
+proc BuildLanguageIndex {} {
+    global Langs LangExt LangOrder
+
+    array unset LangExt
+    foreach name $LangOrder {
+        foreach ext $Langs($name,extensions) {
+            set LangExt([string tolower $ext]) $name
+        }
+    }
+}
+
+# Colour of a role, or empty when the role or the Config key is missing.
+proc LangColor {role} {
+    global Config LangColorKey
+
+    if {![info exists LangColorKey($role)] \
+            || ![info exists Config($LangColorKey($role))]} {
+        return ""
+    }
+    return $Config($LangColorKey($role))
+}
+
+# Language from extension or shebang: a registered language name, or empty.
+# An extension wins over a shebang, and among shebangs the first language
+# loaded wins.
+proc DetectLanguage {path content} {
+    global Langs LangExt LangOrder
+
+    set ext [string tolower [file extension $path]]
+    if {$ext ne "" && [info exists LangExt($ext)]} {
+        return $LangExt($ext)
+    }
+
     set line [string trim [lindex [split $content \n] 0]]
-    if {[string match "#!*" $line]} {
-        if {[string match "*tclsh*" $line] || [string match "*wish*" $line]} {
-            return tcl
-        }
-        if {[string match "*lua*" $line]} {
-            return lua
-        }
-        if {[string match "*bash*" $line] || [string match "*dash*" $line] \
-                || [regexp {/bin/(ba|k|z)?sh} $line]} {
-            return sh
+    if {![string match "#!*" $line]} {
+        return ""
+    }
+    foreach name $LangOrder {
+        foreach pattern $Langs($name,shebang) {
+            if {[regexp -- $pattern $line]} {
+                return $name
+            }
         }
     }
     return ""
 }
 
-# Comment prefix used by Ctrl+/.
+# Comment prefix used by Ctrl+/. Languages without one comment with '#'.
 proc CommentPrefix {lang} {
-    switch -- $lang {
-        c - go { return "//" }
-        lua { return "--" }
-        tcl - sh { return "#" }
-        default { return "#" }
+    global Langs
+
+    if {$lang ne "" && [info exists Langs($lang,line_comment)] \
+            && $Langs($lang,line_comment) ne ""} {
+        return $Langs($lang,line_comment)
     }
+    
+    return "#"
 }
 
-# Drop previous ctext classes and install a monochrome set for lang.
+# Drop the previous ctext classes and install the ones the language declares.
+# ctext repaints every class from its own colour while it highlights, so the
+# only fonts to set here are the two a declaration cannot express: keywords in
+# bold and comments in the editor font.
 proc ApplySyntaxHighlighting {ctext lang} {
-    global Config
+    global Config Langs
 
     catch {::ctext::clearHighlightClasses $ctext}
     catch {::ctext::disableComments $ctext}
 
-    if {!$Config(syntax_highlight) || $lang eq ""} {
+    if {!$Config(syntax_highlight) || $lang eq "" \
+            || ![info exists Langs($lang,classes)]} {
         $ctext highlight 1.0 end
         return
     }
 
-    set kw $Config(hl_keyword)
-    set cm $Config(hl_comment)
-    set st $Config(hl_string)
-    set nu $Config(hl_number)
-    set pu $Config(hl_punct)
-    set pp $Config(hl_preproc)
-
-    switch -- $lang {
-        tcl {
-            ::ctext::addHighlightClass $ctext keywords $kw {
-                proc method constructor destructor namespace package require
-                if else elseif then switch while for foreach break continue
-                return catch error try trap finally throw expr eval uplevel
-                upvar global variable set unset lappend lindex llength lrange
-                lsearch lsort lreplace linsert concat join split string
-                array dict info interp rename apply yield coroutine
-                source open close read puts gets seek tell eof fconfigure
-                bind bindtags event after update winfo wm pack grid place
-                frame toplevel label button entry listbox canvas text
-                checkbutton radiobutton scale scrollbar menu menubutton
-                ttk::frame ttk::button ttk::entry ttk::label ttk::scrollbar
-                incr append subst regexp regsub scan format clock file
-                cd pwd glob exec pid exit return -code
-                binary lassign lset trace timerate time unknown
-                ::oo::class oo::define oo::objdefine
-            }
-            ::ctext::addHighlightClass $ctext constants $nu {
-                false true tcl_version tcl_patchLevel tcl_library auto_path
-                env argc argv argv0 errorCode errorInfo
-            }
-            ::ctext::addHighlightClassWithOnlyCharStart $ctext vars $pu "\$"
-            ::ctext::addHighlightClassForSpecialChars $ctext punct $pu {[]{}\\();}
-            ::ctext::addHighlightClassForRegexp $ctext strings $st {"(\\.|[^"\\])*"}
-            ::ctext::addHighlightClassForRegexp $ctext variables $pu {\$\{[^\}]+\}|\$[[:alnum:]_]+|\$[[:alnum:]_]+\([^)]*\)}
-            ::ctext::addHighlightClassForRegexp $ctext comments $cm {#[^\n\r]*}
+    foreach decl $Langs($lang,classes) {
+        lassign $decl kind tag role spec
+        set color [LangColor $role]
+        if {$color eq ""} {
+            puts stderr "mied: language '$lang': unknown colour role '$role'"
+            continue
         }
-        c {
-            ::ctext::addHighlightClass $ctext keywords $kw {
-                auto break case char const continue default do double else
-                enum extern float for goto if inline int long register
-                restrict return short signed sizeof static struct switch
-                typedef union unsigned void volatile while _Bool _Complex
-                _Imaginary include define ifdef ifndef endif pragma undef
-                true false NULL EXIT_SUCCESS EXIT_FAILURE
-                stdin stdout stderr va_list size_t ptrdiff_t uint8_t uint16_t
-                uint32_t uint64_t int8_t int16_t int32_t int64_t
+        switch -- $kind {
+            class  { ::ctext::addHighlightClass $ctext $tag $color $spec }
+            regexp { ::ctext::addHighlightClassForRegexp $ctext $tag $color $spec }
+            chars  { ::ctext::addHighlightClassForSpecialChars $ctext $tag $color $spec }
+            char   { ::ctext::addHighlightClassWithOnlyCharStart $ctext $tag $color $spec }
+            default {
+                puts stderr "mied: language '$lang': unknown class kind '$kind'"
             }
-            ::ctext::addHighlightClassForRegexp $ctext comments $cm {//[^\n\r]*}
-            ::ctext::addHighlightClassForRegexp $ctext block_comments $cm {/\*([^*]|\*[^/])*\*/}
-            ::ctext::addHighlightClassForRegexp $ctext preproc $pp {^[[:space:]]*#[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]*([[:space:]]+.*)?}
-            ::ctext::addHighlightClassForRegexp $ctext strings $st {"(\\.|[^"\\])*"}
-            ::ctext::addHighlightClassForRegexp $ctext chars $st {'(\\.|[^'\\])*'}
-            ::ctext::addHighlightClassForRegexp $ctext numbers $nu {\m(0[xX][0-9a-fA-F]+([uUlL]*)?|0[bB][01]+([uUlL]*)?|0[0-7]+([uUlL]*)?|[0-9]+(\.[0-9]*)?([eE][-+]?[0-9]+)?[fFlL]?)\M}
-            ::ctext::addHighlightClassForSpecialChars $ctext punct $pu {()[]{};,.:?~!%^&*+=|<>/-}
-        }
-        go {
-            ::ctext::addHighlightClass $ctext keywords $kw {
-                break default func interface select case defer go map struct
-                chan else goto package switch const fallthrough if range type
-                continue for import return var
-            }
-            ::ctext::addHighlightClass $ctext builtins $pu {
-                append bool byte cap close complex copy delete error false
-                imag len make new nil panic print println real recover true
-            }
-            ::ctext::addHighlightClassForRegexp $ctext comments $cm {//[^\n\r]*}
-            ::ctext::addHighlightClassForRegexp $ctext block_comments $cm {/\*([^*]|\*[^/])*\*/}
-            ::ctext::addHighlightClassForRegexp $ctext strings $st {"(\\.|[^"\\])*"|`[^`]*`}
-            ::ctext::addHighlightClassForRegexp $ctext chars $st {'(\\.|[^'\\])*'}
-            ::ctext::addHighlightClassForRegexp $ctext numbers $nu {\m(0[xX][0-9a-fA-F]+|0[bB][01]+|0[oO][0-7]+|[0-9]+(\.[0-9]*)?([eE][-+]?[0-9]+)?i?)\M}
-            ::ctext::addHighlightClassForRegexp $ctext directives $pp {^[[:space:]]*//[[:space:]]*go:[^\n\r]*}
-            ::ctext::addHighlightClassForSpecialChars $ctext punct $pu {()[]{};,.:=*+-/<>!&|^%~}
-        }
-        lua {
-            ::ctext::addHighlightClass $ctext keywords $kw {
-                and break do else elseif end false for function goto if in
-                local nil not or repeat return then true until while
-            }
-            ::ctext::addHighlightClass $ctext builtins $pu {
-                assert collectgarbage dofile error _G getmetatable ipairs
-                load loadfile next pairs pcall print rawequal rawget rawlen
-                rawset require select setmetatable tonumber tostring type
-                _VERSION xpcall string table math io os coroutine debug
-                package utf8 self
-            }
-            ::ctext::addHighlightClassForRegexp $ctext comments $cm {--[^\n\r]*}
-            ::ctext::addHighlightClassForRegexp $ctext block_comments $cm {--\[\[([^\]]|\][^\]])*\]\]}
-            ::ctext::addHighlightClassForRegexp $ctext strings $st {"(\\.|[^"\\])*"}
-            ::ctext::addHighlightClassForRegexp $ctext squote $st {'[^']*'}
-            ::ctext::addHighlightClassForRegexp $ctext long_strings $st {\[\[[^\]]*(\][^\]][^\]]*)*\]\]}
-            ::ctext::addHighlightClassForRegexp $ctext numbers $nu {\m(0[xX][0-9a-fA-F]+|[0-9]+(\.[0-9]*)?([eE][-+]?[0-9]+)?)\M}
-            ::ctext::addHighlightClassForSpecialChars $ctext punct $pu {()[]{};,.:+-*/%^#=<>~}
-        }
-        sh {
-            ::ctext::addHighlightClass $ctext keywords $kw {
-                if then else elif fi case esac for in do done while until
-                function return break continue exit export local readonly
-                unset shift trap eval exec source alias unalias test
-                echo printf read cd pwd set unset declare typeset
-            }
-            ::ctext::addHighlightClassWithOnlyCharStart $ctext vars $pu "\$"
-            ::ctext::addHighlightClassForRegexp $ctext strings $st {"(\\.|[^"\\])*"}
-            ::ctext::addHighlightClassForRegexp $ctext squote $st {'[^']*'}
-            ::ctext::addHighlightClassForRegexp $ctext comments $cm {#[^\n\r]*}
-            ::ctext::addHighlightClassForSpecialChars $ctext punct $pu {[]{}();|}
-        }
-        markdown {
-            ::ctext::addHighlightClassForRegexp $ctext headings $kw {^[[:space:]]{0,3}#{1,6}([[:space:]]+|$).*$}
-            ::ctext::addHighlightClassForRegexp $ctext quotes $pu {^[[:space:]]{0,3}(>[[:space:]]*)+}
-            ::ctext::addHighlightClassForRegexp $ctext lists $pu {^[[:space:]]{0,3}([-+*]|[0-9]+\.)[[:space:]]+}
-            ::ctext::addHighlightClassForRegexp $ctext rules $pu {^[[:space:]]{0,3}([-*_][[:space:]]*){3,}$}
-            ::ctext::addHighlightClassForRegexp $ctext tables $pu {^[[:space:]]*\|.*\|[[:space:]]*$}
-            ::ctext::addHighlightClassForRegexp $ctext table_rule $pu {^[[:space:]]*\|?[[:space:]]*:?-+:?[[:space:]]*(\|[[:space:]]*:?-+:?[[:space:]]*)+\|?[[:space:]]*$}
-            ::ctext::addHighlightClassForRegexp $ctext links $st {!?(\[[^\]\n]+\])\([^\)\n]+\)([[:space:]]+"[^"]*")?}
-            ::ctext::addHighlightClassForRegexp $ctext references $st {!?\[[^\]\n]+\][[:space:]]*:[[:space:]]*\S+.*}
-            ::ctext::addHighlightClassForRegexp $ctext code $st {`[^`\n]+`}
-            ::ctext::addHighlightClassForRegexp $ctext emphasis $kw {\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*|_[^_\n]+_|~~[^~\n]+~~}
-            ::ctext::addHighlightClassForRegexp $ctext comments $cm {<!--([^-]|-[^-])*-->}
-            ::ctext::addHighlightClassForRegexp $ctext fences $pp {^[[:space:]]{0,3}(```|~~~)[[:space:]]*[^\n]*$}
-            ::ctext::addHighlightClassForRegexp $ctext html $pu {</?[A-Za-z][^>]*>|<[[:space:]]*![A-Z][^>]*>}
-            ::ctext::addHighlightClassForRegexp $ctext plugins $pu {(^|[[:space:]])(:::[[:space:]]*[^[:space:]]+|\+\+[^+\n]+\+\+|==[^=\n]+==|\^[^^\n]+\^|~[^~\n]+~)([[:space:]]|$)}
-            ::ctext::addHighlightClassForRegexp $ctext footnotes $st {\[\^[^\]]+\]|\[\^[^\]]+\]:.*}
         }
     }
 
-    $ctext tag configure keywords -font $Config(font_bold) -foreground $kw
-    $ctext tag configure comments -font $Config(font) -foreground $cm
-
-    set extraTags [dict create \
-        c        {block_comments constants variables} \
-        tcl      {block_comments constants variables} \
-        lua      {block_comments long_strings} \
-        markdown {headings emphasis links code fences tables table_rule quotes lists rules html plugins footnotes references}
-    ]
-    if {[dict exists $extraTags $lang]} {
-        foreach tag [dict get $extraTags $lang] {
-            catch {$ctext tag configure $tag -foreground $pu}
-        }
-    }
+    $ctext tag configure keywords -font $Config(font_bold)
+    $ctext tag configure comments -font $Config(font)
 
     $ctext highlight 1.0 end
 }
@@ -2288,11 +2338,12 @@ proc ParseArgv {} {
 
 # --- Start ----------------------------------------------------------------
 
-# Parse argv, build the UI with the resulting config, then open the given
-# files. A single file starts maximized; multiple files remain as regular
-# independent buffers.
+# Parse argv, load the language files and the UI with the resulting config,
+# then open the given files. A single file starts maximized; multiple files
+# remain as regular independent buffers.
 proc Main {} {
     set files [ParseArgv]
+    LoadLanguages [LanguageDir]
     BuildUI
 
     if {[llength $files] == 0} return
