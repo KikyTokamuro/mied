@@ -36,6 +36,7 @@
 #                              fixing selecting file in treeview buffer
 #                              language support moved to langs/*.lang
 #                              added PHP syntax support
+#                              added Forth syntax support
 #     2026-09-12 version 0.3.0 added -config option to load a config file
 #                              fixing ui size with bigger ui font
 #                              added treeview buffer
@@ -1206,15 +1207,7 @@ proc ToggleMaximize {id} {
 # Open-file dialog.
 proc OpenFile {} {
     set types {
-        {{All Files}      *}
-        {{Tcl Files}      {.tcl .tk}}
-        {{C Files}        {.c .h .cpp .cc}}
-        {{PHP Files}      {.php .phtml}}
-        {{Go Files}       {.go}}
-        {{Lua Files}      {.lua}}
-        {{Shell Files}    {.sh .bash}}
-        {{Markdown Files} {.md .markdown .mdown .mkdn .mkd}}
-        {{Text Files}     {.txt}}
+        {{All Files} *}
     }
 
     set filename [tk_getOpenFile -filetypes $types -title "Open File"]
@@ -1295,6 +1288,7 @@ proc SaveAsBuffer {id} {
         {{All Files}      *}
         {{Tcl Files}      {.tcl}}
         {{C Files}        {.c .h}}
+        {{Forth Files}    {.fs .fth .forth .4th .f83 .fb}}
         {{PHP Files}      {.php .phtml}}
         {{Go Files}       {.go}}
         {{Lua Files}      {.lua}}

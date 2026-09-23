@@ -1,0 +1,30 @@
+# langs/forth.lang -- forth syntax support for Mied.
+
+Language forth [list \
+    extensions    {.fs .fth .forth .4th .f83 .fb} \
+    shebang       {gforth forth} \
+    line_comment  "\\"]
+
+HighlightClass  keywords  keyword  {
+    if else then begin while repeat until again do loop leave exit
+    case of endof endcase recurse
+    create variable constant value to defer is immediate
+    postpone compile state literal
+}
+
+HighlightClass  builtins  punct    {
+    dup drop swap over rot nip tuck pick roll depth
+    2dup 2drop 2swap 2over
+    mod negate abs min max
+    and or xor invert not
+    allot here cells cell chars char align aligned
+    move fill erase
+    emit type cr key accept space spaces
+}
+
+HighlightRegexp comments        comment  {\\[^\n\r]*}
+HighlightRegexp block_comments  comment  {\([^)]*\)}
+HighlightRegexp strings         string   {"[^"]*"}
+HighlightRegexp char_lit        string   {'[^']'}
+HighlightRegexp numbers         number   {\m(\$[0-9a-fA-F]+|%[01]+|0[xX][0-9a-fA-F]+|[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?)\M}
+HighlightChars  punct           punct    {[]{};,.:?~!%^&*+=|<>/-@}
