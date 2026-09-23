@@ -37,6 +37,7 @@
 #                              language support moved to langs/*.lang
 #                              added PHP syntax support
 #                              added Forth syntax support
+#                              added HTML/XML syntax support
 #     2026-09-12 version 0.3.0 added -config option to load a config file
 #                              fixing ui size with bigger ui font
 #                              added treeview buffer
@@ -1289,6 +1290,7 @@ proc SaveAsBuffer {id} {
         {{Tcl Files}      {.tcl}}
         {{C Files}        {.c .h}}
         {{Forth Files}    {.fs .fth .forth .4th .f83 .fb}}
+        {{HTML/XML Files} {.html .htm .xhtml .shtml .xml}}
         {{PHP Files}      {.php .phtml}}
         {{Go Files}       {.go}}
         {{Lua Files}      {.lua}}
