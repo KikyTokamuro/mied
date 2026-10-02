@@ -1,0 +1,25 @@
+# langs/go.lang -- go syntax support for Mied.
+
+Language go {
+    extensions    .go
+    line_comment  //
+}
+
+HighlightClass  keywords        keyword  {
+    break default func interface select case defer go map struct
+    chan else goto package switch const fallthrough if range type
+    continue for import return var
+}
+
+HighlightClass  builtins        punct    {
+    append bool byte cap close complex copy delete error false
+    imag len make new nil panic print println real recover true
+}
+
+HighlightRegexp comments        comment  {//[^\n\r]*}
+HighlightRegexp block_comments  comment  {/\*([^*]|\*[^/])*\*/}
+HighlightRegexp strings         string   {"(\\.|[^"\\])*"|`[^`]*`}
+HighlightRegexp chars           string   {'(\\.|[^'\\])*'}
+HighlightRegexp numbers         number   {\m(0[xX][0-9a-fA-F]+|0[bB][01]+|0[oO][0-7]+|[0-9]+(\.[0-9]*)?([eE][-+]?[0-9]+)?i?)\M}
+HighlightRegexp directives      preproc  {^[[:space:]]*//[[:space:]]*go:[^\n\r]*}
+HighlightChars  punct           punct    {()[]{};,.:=*+-/<>!&|^%~}

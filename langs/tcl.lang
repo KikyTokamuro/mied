@@ -1,0 +1,36 @@
+# langs/tcl.lang -- tcl syntax support for Mied.
+
+Language tcl {
+    extensions    {.tcl .tk .itcl .tm}
+    shebang       {tclsh wish}
+    line_comment  #
+}
+
+HighlightClass  keywords        keyword  {
+    proc method constructor destructor namespace package require
+    if else elseif then switch while for foreach break continue
+    return catch error try trap finally throw expr eval uplevel
+    upvar global variable set unset lappend lindex llength lrange
+    lsearch lsort lreplace linsert concat join split string
+    array dict info interp rename apply yield coroutine
+    source open close read puts gets seek tell eof fconfigure
+    bind bindtags event after update winfo wm pack grid place
+    frame toplevel label button entry listbox canvas text
+    checkbutton radiobutton scale scrollbar menu menubutton
+    ttk::frame ttk::button ttk::entry ttk::label ttk::scrollbar
+    incr append subst regexp regsub scan format clock file
+    cd pwd glob exec pid exit return -code
+    binary lassign lset trace timerate time unknown
+    ::oo::class oo::define oo::objdefine
+}
+
+HighlightClass  constants       number   {
+    false true tcl_version tcl_patchLevel tcl_library auto_path
+    env argc argv argv0 errorCode errorInfo
+}
+
+HighlightChar   vars            punct    {$}
+HighlightChars  punct           punct    {[]{}\\();}
+HighlightRegexp strings         string   {"(\\.|[^"\\])*"}
+HighlightRegexp variables       punct    {\$\{[^\}]+\}|\$[[:alnum:]_]+|\$[[:alnum:]_]+\([^)]*\)}
+HighlightRegexp comments        comment  {#[^\n\r]*}

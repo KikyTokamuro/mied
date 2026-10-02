@@ -71,6 +71,10 @@ set Config(tree_show_hidden) 0
 
 # --- Syntax highlighting --------------------------------------------------
 
+# Highlight syntax in editor buffers. 1 (default) enables it, 0 renders
+# every buffer as plain text.
+set Config(syntax_highlight) 1
+
 set Config(hl_keyword)   "#222222"
 set Config(hl_comment)   "#9a9a9a"
 set Config(hl_string)    "#555555"

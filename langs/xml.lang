@@ -1,0 +1,25 @@
+# langs/xml.lang -- html/xml syntax support for Mied.
+
+Language xml {
+    extensions    {
+        .html .htm .xhtml .shtml
+        .xml .xsl .xslt .xsd .dtd
+        .svg .rss .atom
+        .plist .csproj .vcxproj .pom
+    }
+    line_comment  {<!--}
+}
+
+HighlightRegexp comments      comment  {<!--.*?-->}
+HighlightRegexp cdata         preproc  {<!\[CDATA\[.*?\]\]>}
+HighlightRegexp doctype       preproc  {<![A-Za-z][^>]*>}
+HighlightRegexp processing    preproc  {<[?].*?[?]>}
+
+HighlightRegexp tag_name      keyword  {</?[a-zA-Z][a-zA-Z0-9:._-]*}
+
+HighlightRegexp attr_dq       string   {"[^"]*"}
+HighlightRegexp attr_sq       string   {'[^']*'}
+
+HighlightRegexp entity_named  string   {&[a-zA-Z][a-zA-Z0-9]*;}
+HighlightRegexp entity_dec    string   {&#[0-9]+;}
+HighlightRegexp entity_hex    string   {&#[xX][0-9a-fA-F]+;}

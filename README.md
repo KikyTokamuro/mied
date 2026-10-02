@@ -9,7 +9,8 @@ A small, distraction-free multi-document text editor built on Tcl/Tk and the
 
 - Multiple buffers
 - File tree buffers that follow the filesystem as it changes
-- Syntax highlighting for: Tcl, C, Go, sh, Markdown, Lua
+- Syntax highlighting for: Tcl, C, PHP, Go, sh, Markdown, Lua, ..., one file per
+  language in `langs/`
 - Line numbers, status bar with cursor position, and language indicator
 - Find and replace (with case-sensitive toggle)
 - Comment toggling (`#` / `//` based on detected language)
@@ -99,15 +100,16 @@ directory of the active buffer, or for the working directory when no file is
 open. The tree is a normal buffer: it appears in the sidebar, can be moved,
 resized, minimized, and closed like any other.
 
-| Action            | Result                                 |
-| ----------------- | -------------------------------------- |
-| Click a file      | Opens it in a new editor buffer        |
-| Click a directory | Expands or collapses it                |
-| `Enter`           | Same as clicking the selected row      |
-| `Ctrl`+`H`        | Shows or hides hidden (dot) entries    |
-| `F5`              | Re-reads the tree from disk            |
-| `...` (title bar) | Picks another root folder              |
-| `.*` (title bar)  | Same as `Ctrl`+`H`                     |
+| Action                   | Result                                   |
+| ------------------------ | ---------------------------------------- |
+| Double-click a file      | Opens it in a new editor buffer          |
+| Double-click a directory | Expands or collapses it                  |
+| Click a directory arrow  | Expands or collapses it                  |
+| `Enter`                  | Same as double-clicking the selected row |
+| `Ctrl`+`H`               | Shows or hides hidden (dot) entries      |
+| `F5`                     | Re-reads the tree from disk              |
+| `...` (title bar)        | Picks another root folder                |
+| `.*` (title bar)         | Same as `Ctrl`+`H`                       |
 
 Directories are read the first time they are expanded, and the tree re-reads
 the expanded part of the tree every couple of seconds, so files created or
@@ -128,3 +130,37 @@ filled in while they are shown.
 | Save As | Save as…            |
 | Buffers | Toggle sidebar      |
 | About   | About dialog        |
+
+## Building a standalone binary
+
+Mied can be wrapped into a single executable with [tclexecomp](https://tclexecomp.sourceforge.net/):
+
+Linux / macOS:
+```sh
+scripts/build-unix.sh
+```
+
+Windows: 
+```bat
+scripts\build-windows.cmd
+```
+
+Both scripts copy `mied.tcl`, `img/icon.png`, `langs/*.lang`, and `LICENSE`
+into `build/wrap/`, compile the script to bytecode, run tclexecomp with
+`-forcewrap`, and leave the finished binary in `dist/`: `mied` on Linux, `mied.mac` on macOS, `mied.exe` on
+Windows. tclexecomp is not bundled: put its binary for the host platform on
+`PATH`, or point at it with `--tool <path>`. Build on the platform you target.
+
+| Option          | Description                                                  |
+| --------------- | ------------------------------------------------------------ |
+| `--no-compile`  | ship readable Tcl instead of bytecode                        |
+| `--clean`       | remove `build/` and `dist/` before building                  |
+| `--tool <path>` | tclexecomp binary to run                                     |
+| `--name <name>` | name of the output binary (default: `mied`)                  |
+
+Bytecode keeps the source out of the binary and needs `tbcload`, which the
+stock tclexecomp binaries include; use `--no-compile` if you customized the
+stub and removed that module. Run either script with `--help` for the details.
+
+Both scripts compare the finished binary against the stub and fail loudly if it
+holds no payload, so a build that tclexecomp aborted never reaches `dist/`.

@@ -1,0 +1,20 @@
+# langs/sh.lang -- sh syntax support for Mied.
+
+Language sh {
+    extensions    {.sh .bash .ksh .zsh}
+    shebang       {bash dash {/bin/(ba|k|z)?sh}}
+    line_comment  #
+}
+
+HighlightClass  keywords        keyword  {
+    if then else elif fi case esac for in do done while until
+    function return break continue exit export local readonly
+    unset shift trap eval exec source alias unalias test
+    echo printf read cd pwd set unset declare typeset
+}
+
+HighlightChar   vars            punct    {$}
+HighlightRegexp strings         string   {"(\\.|[^"\\])*"}
+HighlightRegexp squote          string   {'[^']*'}
+HighlightRegexp comments        comment  {#[^\n\r]*}
+HighlightChars  punct           punct    {[]{}();|}

@@ -1,0 +1,21 @@
+# langs/markdown.lang -- markdown syntax support for Mied.
+
+Language markdown {
+    extensions    {.md .markdown .mdown .mkdn .mkd}
+}
+
+HighlightRegexp headings        keyword  {^[[:space:]]{0,3}#{1,6}([[:space:]]+|$).*$}
+HighlightRegexp quotes          punct    {^[[:space:]]{0,3}(>[[:space:]]*)+}
+HighlightRegexp lists           punct    {^[[:space:]]{0,3}([-+*]|[0-9]+\.)[[:space:]]+}
+HighlightRegexp rules           punct    {^[[:space:]]{0,3}([-*_][[:space:]]*){3,}$}
+HighlightRegexp tables          punct    {^[[:space:]]*\|.*\|[[:space:]]*$}
+HighlightRegexp table_rule      punct    {^[[:space:]]*\|?[[:space:]]*:?-+:?[[:space:]]*(\|[[:space:]]*:?-+:?[[:space:]]*)+\|?[[:space:]]*$}
+HighlightRegexp links           string   {!?(\[[^\]\n]+\])\([^\)\n]+\)([[:space:]]+"[^"]*")?}
+HighlightRegexp references      string   {!?\[[^\]\n]+\][[:space:]]*:[[:space:]]*\S+.*}
+HighlightRegexp code            string   {`[^`\n]+`}
+HighlightRegexp emphasis        keyword  {\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*|_[^_\n]+_|~~[^~\n]+~~}
+HighlightRegexp comments        comment  {<!--([^-]|-[^-])*-->}
+HighlightRegexp fences          preproc  {^[[:space:]]{0,3}(```|~~~)[[:space:]]*[^\n]*$}
+HighlightRegexp html            punct    {</?[A-Za-z][^>]*>|<[[:space:]]*![A-Z][^>]*>}
+HighlightRegexp plugins         punct    {(^|[[:space:]])(:::[[:space:]]*[^[:space:]]+|\+\+[^+\n]+\+\+|==[^=\n]+==|\^[^^\n]+\^|~[^~\n]+~)([[:space:]]|$)}
+HighlightRegexp footnotes       string   {\[\^[^\]]+\]|\[\^[^\]]+\]:.*}
