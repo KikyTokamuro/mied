@@ -31,8 +31,8 @@
 # SOFTWARE.
 #
 # Changelog
-#              - version 0.4.0 added "syntax_highlight" to config
-#                              added info about about build binary
+#     2026-10-02 version 0.4.0 added "syntax_highlight" to config
+#                              added info about build binary
 #                              fixing selecting file in treeview buffer
 #                              language support moved to langs/*.lang
 #                              added PHP syntax support
