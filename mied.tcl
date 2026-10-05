@@ -31,6 +31,7 @@
 # SOFTWARE.
 #
 # Changelog
+#              - version 0.5.0 added "show_scrollbars" to config
 #     2026-10-02 version 0.4.0 added "syntax_highlight" to config
 #                              added info about build binary
 #                              fixing selecting file in treeview buffer
@@ -51,7 +52,7 @@
 package require Tk
 package require ctext
 
-set Mied(version) "0.4.0"
+set Mied(version) "0.5.0"
 set Mied(authors) "Daniil Arkhangelsky (Kiky Tokamuro)"
 set Mied(license) "MIT License, 2026"
 
@@ -113,45 +114,40 @@ proc ComputeLayout {} {
 proc LoadDefaultConfig {} {
     global Config
 
-    set Config(accent)       "#5d7e73"
-    set Config(bg)           "#e8e8e8"
-    set Config(fg)           "#666666"
-    set Config(toolbar_bg)   "#c8c8c8"
-    set Config(sidebar_bg)   "#c8c8c8"
-    set Config(window_bg)    "#ffffff"
-    set Config(titlebar_bg)  "#c8c8c8"
-    set Config(border)       "#aaaaaa"
-    set Config(font)         {"Fira Code" 10}
-    set Config(font_bold)    {"Fira Code" 10 bold}
-    set Config(ui_font)      {"Fira Code" 9}
-    set Config(status_fg)    "#666666"
-    set Config(close_hover)  "#cc0000"
-    set Config(min_hover)    "#5d7e73"
-    set Config(btn_hover_bg) "#bbbbbb"
-    set Config(hover_fg)     "#000000"
-    set Config(title_fg)     "#444444"
-    set Config(list_fg)      "#444444"
-    set Config(insert_color) "#000000"
-    set Config(sel_bg)       "#5d7e73"
-    set Config(sel_fg)       "#ffffff"
-    set Config(scroll_bg)    "#cccccc"
-    set Config(header_fg)    "#666666"
-    set Config(linenum_bg)   "#f0f0f0"
-    set Config(linenum_fg)   "#888888"
-
-    # File tree buffers start with dot entries hidden; Ctrl+H toggles it.
+    set Config(accent)           "#5d7e73"
+    set Config(bg)               "#e8e8e8"
+    set Config(fg)               "#666666"
+    set Config(toolbar_bg)       "#c8c8c8"
+    set Config(sidebar_bg)       "#c8c8c8"
+    set Config(window_bg)        "#ffffff"
+    set Config(titlebar_bg)      "#c8c8c8"
+    set Config(border)           "#aaaaaa"
+    set Config(font)             {"Fira Code" 10}
+    set Config(font_bold)        {"Fira Code" 10 bold}
+    set Config(ui_font)          {"Fira Code" 9}
+    set Config(status_fg)        "#666666"
+    set Config(close_hover)      "#cc0000"
+    set Config(min_hover)        "#5d7e73"
+    set Config(btn_hover_bg)     "#bbbbbb"
+    set Config(hover_fg)         "#000000"
+    set Config(title_fg)         "#444444"
+    set Config(list_fg)          "#444444"
+    set Config(insert_color)     "#000000"
+    set Config(sel_bg)           "#5d7e73"
+    set Config(sel_fg)           "#ffffff"
+    set Config(scroll_bg)        "#cccccc"
+    set Config(header_fg)        "#666666"
+    set Config(linenum_bg)       "#f0f0f0"
+    set Config(linenum_fg)       "#888888"
+    set Config(show_scrollbars)  1
     set Config(tree_show_hidden) 0
-
-    # Syntax highlighting is on by default; 0 renders buffers as plain text.
     set Config(syntax_highlight) 1
-
-    # Monochrome highlight
-    set Config(hl_keyword)   "#222222"
-    set Config(hl_comment)   "#9a9a9a"
-    set Config(hl_string)    "#555555"
-    set Config(hl_number)    "#333333"
-    set Config(hl_punct)     "#777777"
-    set Config(hl_preproc)   "#444444"
+    set Config(hl_keyword)       "#222222"
+    set Config(hl_comment)       "#9a9a9a"
+    set Config(hl_string)        "#555555"
+    set Config(hl_number)        "#333333"
+    set Config(hl_punct)         "#777777"
+    set Config(hl_preproc)       "#444444"
 }
 
 # Source a user config file over the defaults. The file is plain Tcl and can
@@ -785,7 +781,10 @@ proc CreateWindow {id} {
     # The grip fills the corner between the scrollbars, so it follows their
     # thickness instead of scaling with the font. A tree buffer has only the
     # vertical bar, in which case the grip is square.
-    set gripW [winfo width $win.content.vsb]
+    set gripW 0
+    if {[winfo exists $win.content.vsb]} {
+        set gripW [winfo width $win.content.vsb]
+    }
     set gripH 0
     if {[winfo exists $win.content.hsb]} {
         set gripH [winfo height $win.content.hsb]
@@ -843,16 +842,28 @@ proc CreateWindow {id} {
     UpdateLineCounter $id
 }
 
-# Body of an editor buffer: the ctext widget and its two scrollbars.
+# Body of an editor buffer: the ctext widget and its scrollbars. When
+# Config(show_scrollbars) is off the bars are not created at all, and the
+# scroll commands are left unset so the widget never calls a missing command.
 proc BuildEditorBody {id} {
     global Buffers Config
 
     set win $Buffers($id,window)
+    set vsb $win.content.vsb
+    set hsb $win.content.hsb
+
+    set scrollArgs {}
+    if {$Config(show_scrollbars)} {
+        ttk::scrollbar $vsb -orient vertical   -command [list $win.content.ctext yview]
+        ttk::scrollbar $hsb -orient horizontal -command [list $win.content.ctext xview]
+        set scrollArgs [list \
+            -yscrollcommand [list $vsb set] \
+            -xscrollcommand [list $hsb set]]
+    }
 
     ctext $win.content.ctext -bg $Config(window_bg) -fg $Config(fg) \
         -font $Config(font) -wrap none \
-        -yscrollcommand [list $win.content.vsb set] \
-        -xscrollcommand [list $win.content.hsb set] \
+        {*}$scrollArgs \
         -undo 1 -maxundo 100 \
         -insertbackground $Config(insert_color) \
         -selectbackground $Config(sel_bg) \
@@ -866,19 +877,25 @@ proc BuildEditorBody {id} {
         -linemap_select_bg $Config(sel_bg) \
         -tabs [font measure $Config(font) "    "]
 
+    # The line-number gutter is a nested text widget that keeps text's default
+    # highlight ring (3px, system highlight color), which shows as a light
+    # border around the linemap background on dark themes.
+    catch {
+        $win.content.ctext.l configure \
+            -highlightthickness 0 -borderwidth 0 \
+            -highlightbackground $Config(linenum_bg)
+    }
+
     $win.content.ctext tag configure found \
         -background $Config(accent) \
         -foreground $Config(insert_color)
     $win.content.ctext tag raise found
 
-    ttk::scrollbar $win.content.vsb -orient vertical \
-        -command [list $win.content.ctext yview]
-    ttk::scrollbar $win.content.hsb -orient horizontal \
-        -command [list $win.content.ctext xview]
-
     grid $win.content.ctext -row 0 -column 0 -sticky nsew
-    grid $win.content.vsb   -row 0 -column 1 -sticky ns
-    grid $win.content.hsb   -row 1 -column 0 -sticky ew
+    if {$Config(show_scrollbars)} {
+        grid $vsb -row 0 -column 1 -sticky ns
+        grid $hsb -row 1 -column 0 -sticky ew
+    }
     grid rowconfigure    $win.content 0 -weight 1
     grid columnconfigure $win.content 0 -weight 1
 }
@@ -1857,12 +1874,19 @@ proc BuildTreeBody {id} {
         -background [list selected $Config(sel_bg)] \
         -foreground [list selected $Config(sel_fg)]
 
-    ttk::treeview $tree -style Mied.Treeview -show tree -selectmode browse \
-        -yscrollcommand [list $win.content.vsb set]
-    ttk::scrollbar $win.content.vsb -orient vertical -command [list $tree yview]
+    set scrollArgs {}
+    if {$Config(show_scrollbars)} {
+        ttk::scrollbar $win.content.vsb -orient vertical -command [list $tree yview]
+        set scrollArgs [list -yscrollcommand [list $win.content.vsb set]]
+    }
 
-    grid $tree            -row 0 -column 0 -sticky nsew
-    grid $win.content.vsb -row 0 -column 1 -sticky ns
+    ttk::treeview $tree -style Mied.Treeview -show tree -selectmode browse \
+        {*}$scrollArgs
+
+    grid $tree -row 0 -column 0 -sticky nsew
+    if {$Config(show_scrollbars)} {
+        grid $win.content.vsb -row 0 -column 1 -sticky ns
+    }
     grid rowconfigure    $win.content 0 -weight 1
     grid columnconfigure $win.content 0 -weight 1
     $tree column "#0" -stretch 1

@@ -63,6 +63,10 @@ set Config(scroll_bg)    "#cccccc"
 set Config(linenum_bg)   "#f0f0f0"
 set Config(linenum_fg)   "#888888"
 
+# Show scrollbars in editor and file-tree buffers. 0 hides them; scrolling
+# still works with the mouse wheel, keyboard, and find/replace commands.
+set Config(show_scrollbars) 1
+
 # --- File tree ------------------------------------------------------------
 
 # List hidden (dot) entries in file tree buffers when they are created.
