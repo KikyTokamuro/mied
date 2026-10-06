@@ -32,6 +32,7 @@
 #
 # Changelog
 #              - version 0.5.0 added "show_scrollbars" to config
+#                              added resizing buffers by dragging any edge
 #     2026-10-02 version 0.4.0 added "syntax_highlight" to config
 #                              added info about build binary
 #                              fixing selecting file in treeview buffer
@@ -239,31 +240,69 @@ proc MaximizedGeom {} {
     return [list $g $g [expr {max(50, $dw - 2 * $g)}] [expr {max(50, $dh - 2 * $g)}]]
 }
 
-# Distance from the window bottom to the resize grip: above the status bar
-# and, when the find bar is open, above that as well. Bar heights are measured
-# from the widgets, since the bars size themselves from their contents.
-proc ResizeHandleOffset {id} {
-    global Buffers
+# Edge bands that make a buffer resizable from every side and corner.
+# moves. They are children of the buffer window and sit above its title bar,
+# content and status bar, so they are raised last.
+proc BuildResizeEdges {id} {
+    global Buffers Config
 
     set win $Buffers($id,window)
-    set yOff [winfo reqheight $win.statusbar]
-    if {[info exists Buffers($id,findbar)] && $Buffers($id,findbar) \
-            && [winfo exists $win.findbar]} {
-        incr yOff [winfo reqheight $win.findbar]
+
+    foreach side {n s w e nw ne sw se} {
+        set cursor sizing
+        switch -- $side {
+            n - s { set cursor sb_v_double_arrow }
+            w - e { set cursor sb_h_double_arrow }
+        }
+        set edge $win.resize_$side
+        frame $edge -bg $Config(border) -cursor $cursor
+        bind $edge <ButtonPress-1> [list StartResize %W %X %Y $id $side]
+        bind $edge <B1-Motion>     [list OnResize %W %X %Y $id]
     }
-    return [expr {-$yOff}]
+
+    PlaceResizeEdges $id
 }
 
-# Pins the resize grip above the status bar (and findbar, if shown).
-proc PlaceResizeHandle {id} {
-	global Buffers
-	if {![SafeWindowExists $id]} return
-	if {![info exists Buffers($id,visible)] || !$Buffers($id,visible)} return
+# Lay the edge bands along the current window sides. Relative placement keeps
+# them in step with later resizes, so nothing needs repositioning by hand.
+proc PlaceResizeEdges {id} {
+    global Buffers
+
+    if {![SafeWindowExists $id]} return
 
     set win $Buffers($id,window)
-    set yOff [ResizeHandleOffset $id]
-    place $win.resize -relx 1.0 -rely 1.0 -anchor se -y $yOff
-    raise $win.resize
+    if {![winfo exists $win.resize_n]} return
+
+    set resizeBorderSize 1
+    set resizeCornerSize 1
+
+    place $win.resize_n  -x 0 -y 0 -relwidth 1.0 -height $resizeBorderSize
+    place $win.resize_s  -x 0 -rely 1.0 -anchor sw -relwidth 1.0 -height $resizeBorderSize
+    place $win.resize_w  -x 0 -y 0 -relheight 1.0 -width $resizeBorderSize
+    place $win.resize_e  -relx 1.0 -y 0 -anchor ne -relheight 1.0 -width $resizeBorderSize
+
+    place $win.resize_nw -x 0 -y 0 -width $resizeCornerSize -height $resizeCornerSize
+    place $win.resize_ne -relx 1.0 -y 0 -anchor ne -width $resizeCornerSize -height $resizeCornerSize
+    place $win.resize_sw -x 0 -rely 1.0 -anchor sw -width $resizeCornerSize -height $resizeCornerSize
+    place $win.resize_se -relx 1.0 -rely 1.0 -anchor se -width $resizeCornerSize -height $resizeCornerSize
+
+    foreach side {n s w e nw ne sw se} {
+        raise $win.resize_$side
+    }
+}
+
+# Drop the edge bands.
+proc HideResizeEdges {id} {
+    global Buffers
+
+    if {![SafeWindowExists $id]} return
+
+    set win $Buffers($id,window)
+    foreach side {n s w e nw ne sw se} {
+        if {[winfo exists $win.resize_$side]} {
+            place forget $win.resize_$side
+        }
+    }
 }
 
 # Flat canvas button. Uses grid when -row/-column is present, otherwise pack.
@@ -683,7 +722,7 @@ proc CreateWindow {id} {
     set x [expr {max(1, ($desktopW - $bufferW) / 2 + $col * $step)}]
     set y [expr {max(1, ($desktopH - $bufferH) / 2 + $row * $step)}]
 
-    frame $win -bg $Config(border) -bd 1 -relief flat
+    frame $win -relief flat
 
     frame $win.titlebar -bg $Config(titlebar_bg) -height $Layout(titlebar_h) -cursor fleur
     grid $win.titlebar -row 0 -column 0 -sticky ew
@@ -727,9 +766,6 @@ proc CreateWindow {id} {
     } else {
         BuildEditorBody $id
     }
-
-    # Sized from the scrollbars below; 17x15 is only the fallback size.
-    frame $win.resize -bg $Config(border) -cursor sizing -width 17 -height 15
 
     frame $win.statusbar -bg $Config(titlebar_bg) -height $Layout(statusbar_h)
     grid $win.statusbar -row 2 -column 0 -sticky ew
@@ -778,23 +814,7 @@ proc CreateWindow {id} {
     place $win -x $x -y $y -width 500 -height 350
     update idletasks
 
-    # The grip fills the corner between the scrollbars, so it follows their
-    # thickness instead of scaling with the font. A tree buffer has only the
-    # vertical bar, in which case the grip is square.
-    set gripW 0
-    if {[winfo exists $win.content.vsb]} {
-        set gripW [winfo width $win.content.vsb]
-    }
-    set gripH 0
-    if {[winfo exists $win.content.hsb]} {
-        set gripH [winfo height $win.content.hsb]
-    }
-    if {$gripW > 1 && $gripH > 1} {
-        $win.resize configure -width $gripW -height $gripH
-    } elseif {$gripW > 1} {
-        $win.resize configure -width $gripW -height $gripW
-    }
-    PlaceResizeHandle $id
+    BuildResizeEdges $id
     raise $win
     incr ::ZIndex
 
@@ -805,9 +825,6 @@ proc CreateWindow {id} {
     bind $win.titlebar.label <ButtonPress-1>   [list StartDrag %W %X %Y $id]
     bind $win.titlebar.label <B1-Motion>       [list OnDrag %W %X %Y $id]
     bind $win.titlebar.label <Double-Button-1> [list ToggleMaximize $id]
-
-    bind $win.resize <ButtonPress-1> [list StartResize %W %X %Y $id]
-    bind $win.resize <B1-Motion>     [list OnResize %W %X %Y $id]
 
     bind $win <Button-1> [list ActivateWindow $id]
 
@@ -996,8 +1013,8 @@ proc MinimizeWindow {id} {
         grid forget $win.content
         grid forget $win.statusbar
         if {[winfo exists $win.findbar]} { grid forget $win.findbar }
-        place forget $win.resize
-        place $win -height [expr {[winfo reqheight $win.titlebar] + 2}]
+        HideResizeEdges $id
+        place $win -height [winfo reqheight $win.titlebar]
         set Buffers($id,visible) 0
     } else {
         grid $win.content   -row 1 -column 0 -sticky nsew
@@ -1011,7 +1028,7 @@ proc MinimizeWindow {id} {
         }
         place $win -height $h
         set Buffers($id,visible) 1
-        PlaceResizeHandle $id
+        PlaceResizeEdges $id
     }
     UpdateBufferList
 }
@@ -1022,7 +1039,6 @@ proc RaiseWindow {id} {
     incr ZIndex
     if {[SafeWindowExists $id]} {
         raise $Buffers($id,window)
-        PlaceResizeHandle $id
     }
 }
 
@@ -1161,18 +1177,23 @@ proc OnDrag {widget x y id} {
     set Buffers($id,maximized) 0
 }
 
-# Snapshot size when the resize grip is pressed.
-proc StartResize {widget x y id} {
+# Snapshot geometry when an edge or corner is pressed. side names the edges
+# that may move: n/s/w/e, or a corner such as nw.
+proc StartResize {widget x y id side} {
     global ResizeStart ResizeWin
     set ResizeWin [winfo parent $widget]
     set ResizeStart(x) $x
     set ResizeStart(y) $y
+    set ResizeStart(X) [winfo x $ResizeWin]
+    set ResizeStart(Y) [winfo y $ResizeWin]
     set ResizeStart(w) [winfo width $ResizeWin]
     set ResizeStart(h) [winfo height $ResizeWin]
+    set ResizeStart(side) $side
     ActivateWindow $id
 }
 
-# Resize; minimum 200×150.
+# Resize from the dragged edge, leaving the opposite edge in place; minimum
+# 200×150.
 proc OnResize {widget x y id} {
     global ResizeStart ResizeWin Buffers
     if {![info exists ResizeWin]} return
@@ -1180,10 +1201,45 @@ proc OnResize {widget x y id} {
 
     set dx [expr {$x - $ResizeStart(x)}]
     set dy [expr {$y - $ResizeStart(y)}]
+    set side $ResizeStart(side)
 
-    set newW [expr {max(200, $ResizeStart(w) + $dx)}]
-    set newH [expr {max(150, $ResizeStart(h) + $dy)}]
-    place $ResizeWin -width $newW -height $newH
+    set X $ResizeStart(X)
+    set Y $ResizeStart(Y)
+    set W $ResizeStart(w)
+    set H $ResizeStart(h)
+
+    set minW 200
+    set minH 150
+
+    if {[string first "w" $side] >= 0} {
+        set W [expr {$ResizeStart(w) - $dx}]
+        if {$W < $minW} {
+            set W $minW
+            set X [expr {$ResizeStart(X) + $ResizeStart(w) - $minW}]
+        } else {
+            set X [expr {$ResizeStart(X) + $dx}]
+        }
+    }
+    if {[string first "e" $side] >= 0} {
+        set W [expr {$ResizeStart(w) + $dx}]
+        if {$W < $minW} { set W $minW }
+    }
+    if {[string first "n" $side] >= 0} {
+        set H [expr {$ResizeStart(h) - $dy}]
+        if {$H < $minH} {
+            set H $minH
+            set Y [expr {$ResizeStart(Y) + $ResizeStart(h) - $minH}]
+        } else {
+            set Y [expr {$ResizeStart(Y) + $dy}]
+        }
+    }
+    if {[string first "s" $side] >= 0} {
+        set H [expr {$ResizeStart(h) + $dy}]
+        if {$H < $minH} { set H $minH }
+    }
+    if {$Y < 1} { set Y 1 }
+
+    place $ResizeWin -x $X -y $Y -width $W -height $H
     set Buffers($id,maximized) 0
 }
 
@@ -1217,7 +1273,6 @@ proc ToggleMaximize {id} {
         place $win -x $mx -y $my -width $mw -height $mh
         set Buffers($id,maximized) 1
     }
-    PlaceResizeHandle $id
 }
 
 # --- Files ----------------------------------------------------------------
@@ -1388,7 +1443,6 @@ proc RelayoutMaximized {} {
             set id [lindex [split $key ","] 0]
             if {[SafeWindowExists $id]} {
                 place $Buffers($id,window) -x $mx -y $my -width $mw -height $mh
-                PlaceResizeHandle $id
             }
         }
     }
@@ -1575,7 +1629,6 @@ proc ShowFindBar {id} {
     set win $Buffers($id,window)
     set Buffers($id,findbar) 1
     grid $win.findbar -row 3 -column 0 -sticky ew
-    PlaceResizeHandle $id
     focus $win.findbar.find
 }
 
@@ -1589,7 +1642,6 @@ proc HideFindBar {id} {
     $win.content.ctext tag remove found 1.0 end
     grid forget $win.findbar
     set Buffers($id,findbar) 0
-    PlaceResizeHandle $id
     focus $win.content.ctext
 }
 
