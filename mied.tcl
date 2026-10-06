@@ -123,9 +123,9 @@ proc LoadDefaultConfig {} {
     set Config(window_bg)        "#ffffff"
     set Config(titlebar_bg)      "#c8c8c8"
     set Config(border)           "#aaaaaa"
-    set Config(font)             {"Fira Code" 10}
-    set Config(font_bold)        {"Fira Code" 10 bold}
-    set Config(ui_font)          {"Fira Code" 9}
+    set Config(font)             {"FiraCode Nerd Font" 10}
+    set Config(font_bold)        {"FiraCode Nerd Font" 10 bold}
+    set Config(ui_font)          {"FiraCode Nerd Font" 9}
     set Config(status_fg)        "#666666"
     set Config(close_hover)      "#cc0000"
     set Config(min_hover)        "#5d7e73"

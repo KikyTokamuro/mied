@@ -24,13 +24,13 @@ set Config(border)       "#aaaaaa"
 # --- Fonts ----------------------------------------------------------------
 
 # Editor font and size
-set Config(font)         {"Fira Code" 10}
-set Config(font_bold)    {"Fira Code" 10 bold}
+set Config(font)         {"FiraCode Nerd Font" 10}
+set Config(font_bold)    {"FiraCode Nerd Font" 10 bold}
 
 # Smaller font for toolbars, title bars, and status bars. The chrome
 # (bar and button sizes) scales with this size, so enlarging it enlarges
 # the toolbar, buttons, and status bar along with the text.
-set Config(ui_font)      {"Fira Code" 9}
+set Config(ui_font)      {"FiraCode Nerd Font" 9}
 
 # --- Text colors ----------------------------------------------------------
 
