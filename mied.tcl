@@ -273,6 +273,13 @@ proc PlaceResizeEdges {id} {
     set win $Buffers($id,window)
     if {![winfo exists $win.resize_n]} return
 
+    if {[winfo manager $win.resize_n] eq "place"} {
+        foreach side {n s w e nw ne sw se} {
+            raise $win.resize_$side
+        }
+        return
+    }
+
     set resizeBorderSize 1
     set resizeCornerSize 1
 
@@ -301,6 +308,26 @@ proc HideResizeEdges {id} {
     foreach side {n s w e nw ne sw se} {
         if {[winfo exists $win.resize_$side]} {
             place forget $win.resize_$side
+        }
+    }
+}
+
+# The edge bands belong to the active buffer only: activating a buffer moves
+# them there and drops them everywhere else.
+# A minimized window keeps its own hidden until restored.
+proc SyncResizeEdges {} {
+    global Buffers ActiveBufferId
+
+    foreach key [array names Buffers *,window] {
+        set id [lindex [split $key ","] 0]
+        set keep [expr {$id eq $ActiveBufferId && \
+            [SafeWindowExists $id] && \
+            [info exists Buffers($id,visible)] && $Buffers($id,visible)}]
+
+        if {$keep} {
+            PlaceResizeEdges $id
+        } else {
+            HideResizeEdges $id
         }
     }
 }
@@ -1028,7 +1055,7 @@ proc MinimizeWindow {id} {
         }
         place $win -height $h
         set Buffers($id,visible) 1
-        PlaceResizeEdges $id
+        SyncResizeEdges
     }
     UpdateBufferList
 }
@@ -1052,6 +1079,7 @@ proc ActivateWindow {id} {
 proc SetActiveBuffer {id} {
     global ActiveBufferId
     set ActiveBufferId $id
+    SyncResizeEdges
     UpdateBufferList
     UpdateStatus
 }
