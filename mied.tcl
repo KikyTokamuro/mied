@@ -33,6 +33,7 @@
 # Changelog
 #              - version 0.5.0 added "show_scrollbars" to config
 #                              added resizing buffers by dragging any edge
+#                              added keeping buffers inside the window
 #     2026-10-02 version 0.4.0 added "syntax_highlight" to config
 #                              added info about build binary
 #                              fixing selecting file in treeview buffer
@@ -71,7 +72,7 @@ set FindCaseSensitive 0
 # --- Layout ---------------------------------------------------------------
 
 set Layout(sidebar_w) 180
-set Layout(gap)       2       ;# gutter between sidebar and desktop
+set Layout(gap)       0       ;# gutter between sidebar and desktop
 
 # Size component of a font descriptor ({family size ?style?}). 9 is the
 # default ui size and the reference for every scaled chrome metric.
@@ -233,10 +234,9 @@ proc PlaceDesktop {} {
 # Geometry of a maximized buffer: inset by Layout(gap) so the desktop
 # background shows as a rim (same idea as the strip under the toolbar).
 proc MaximizedGeom {} {
-    global Desktop Layout
+    global Layout
     set g $Layout(gap)
-    set dw [winfo width $Desktop]
-    set dh [winfo height $Desktop]
+    lassign [DesktopBounds] dw dh
     return [list $g $g [expr {max(50, $dw - 2 * $g)}] [expr {max(50, $dh - 2 * $g)}]]
 }
 
@@ -1189,16 +1189,30 @@ proc StartDrag {widget x y id} {
     ActivateWindow $id
 }
 
-# Move the window by the mouse delta; Y stays >= 1.
+# Move the window by the mouse delta, keeping it inside the buffer area:
+# X stays within [0, width - window width] and Y within [0, height - window
+# height], with the bounds coming from DesktopBounds (the main window minus
+# the toolbar strip and the offset where the buffer panel ends). A buffer
+# therefore never covers the toolbar or the buffer panel, and never leaves
+# the main window on the right or at the bottom.
 proc OnDrag {widget x y id} {
     global DragStart DragWin Buffers
+
     if {![info exists DragWin]} return
     if {![winfo exists $DragWin]} return
 
+    lassign [DesktopBounds] availW availH
+    if {$availW < 1 || $availH < 1} return
+
     set dx [expr {$x - $DragStart(x)}]
     set dy [expr {$y - $DragStart(y)}]
-    set newX [expr {[winfo x $DragWin] + $dx}]
-    set newY [expr {max(1, [winfo y $DragWin] + $dy)}]
+
+    set maxX [expr {max(0, $availW - [winfo width $DragWin])}]
+    set maxY [expr {max(0, $availH - [winfo height $DragWin])}]
+
+    set newX [expr {min($maxX, max(0, [winfo x $DragWin] + $dx))}]
+    set newY [expr {min($maxY, max(0, [winfo y $DragWin] + $dy))}]
+
     place $DragWin -x $newX -y $newY
     set DragStart(x) $x
     set DragStart(y) $y
@@ -1221,11 +1235,16 @@ proc StartResize {widget x y id side} {
 }
 
 # Resize from the dragged edge, leaving the opposite edge in place; minimum
-# 200×150.
+# 200×150. The dragged edge is also kept inside the buffer area (same
+# DesktopBounds the drag uses), so a resize cannot push any part of the
+# window over the toolbar, the buffer panel or the main window's edges.
 proc OnResize {widget x y id} {
     global ResizeStart ResizeWin Buffers
     if {![info exists ResizeWin]} return
     if {![winfo exists $ResizeWin]} return
+
+    lassign [DesktopBounds] deskW deskH
+    if {$deskW < 1 || $deskH < 1} return
 
     set dx [expr {$x - $ResizeStart(x)}]
     set dy [expr {$y - $ResizeStart(y)}]
@@ -1265,7 +1284,21 @@ proc OnResize {widget x y id} {
         set H [expr {$ResizeStart(h) + $dy}]
         if {$H < $minH} { set H $minH }
     }
-    if {$Y < 1} { set Y 1 }
+
+    # Keep the window inside the buffer area on all four sides: the edge
+    # being dragged may not cross a border, and the opposite edge stays put.
+    # Shrinking W/H moves only the edge being dragged, while pulling X/Y back
+    # to the border keeps the far edge where it was.
+    if {$X < 0} {
+        set W [expr {$W + $X}]
+        set X 0
+    }
+    if {$Y < 0} {
+        set H [expr {$H + $Y}]
+        set Y 0
+    }
+    if {$X + $W > $deskW} { set W [expr {$deskW - $X}] }
+    if {$Y + $H > $deskH} { set H [expr {$deskH - $Y}] }
 
     place $ResizeWin -x $X -y $Y -width $W -height $H
     set Buffers($id,maximized) 0
@@ -1474,6 +1507,26 @@ proc RelayoutMaximized {} {
             }
         }
     }
+}
+
+# Available area for buffer windows, in .desktop coordinates, measured off
+# the main window ".": its width minus the offset where .desktop starts (the
+# buffer panel), and its height minus the toolbar strip. The right and
+# bottom edges therefore stop at the main window, while the left edge is the
+# buffer panel and the top edge is the toolbar -- a buffer never overlaps
+# either. Returns {width height}, or {0 0} until "." is mapped.
+proc DesktopBounds {} {
+    global Layout
+    if {![winfo exists .]} { return [list 0 0] }
+    if {![info exists Layout(toolbar_h)]} { return [list 0 0] }
+
+    set dx 0
+    if {[winfo exists .desktop]} { set dx [winfo x .desktop] }
+
+    set w [expr {[winfo width .] - $dx}]
+    set h [expr {[winfo height .] - $Layout(toolbar_h)}]
+    if {$w < 1 || $h < 1} { return [list 0 0] }
+    return [list $w $h]
 }
 
 # Toolbar, sidebar, desktop, and global hotkeys.
