@@ -34,6 +34,7 @@
 #              - version 0.5.0 added "show_scrollbars" to config
 #                              added resizing buffers by dragging any edge
 #                              added keeping buffers inside the window
+#                              added more examples themes
 #     2026-10-02 version 0.4.0 added "syntax_highlight" to config
 #                              added info about build binary
 #                              fixing selecting file in treeview buffer
