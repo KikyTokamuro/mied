@@ -35,6 +35,7 @@
 #                              added resizing buffers by dragging any edge
 #                              added keeping buffers inside the window
 #                              added more examples themes
+#                              added treeview context menu with create/delete of files and folders
 #     2026-10-02 version 0.4.0 added "syntax_highlight" to config
 #                              added info about build binary
 #                              fixing selecting file in treeview buffer
@@ -55,7 +56,7 @@
 package require Tk
 package require ctext
 
-set Mied(version) "0.5.0"
+set Mied(version) "0.5.0-dev"
 set Mied(authors) "Daniil Arkhangelsky (Kiky Tokamuro)"
 set Mied(license) "MIT License, 2026"
 
@@ -2035,6 +2036,13 @@ proc BuildTreeBody {id} {
     bind $tree <Control-H>       [list TreeToggleHidden $id]
     bind $tree <Control-w>       [list CloseBuffer $id]
 
+    # Right click pops the create/delete menu. Button-2 and Control-Button-1
+    # cover macOS, where a right click may arrive as either of those.
+    bind $tree <Button-3>         [list TreeContextMenu $id %W %x %y %X %Y]
+    bind $tree <Button-2>         [list TreeContextMenu $id %W %x %y %X %Y]
+    bind $tree <Control-Button-1> [list TreeContextMenu $id %W %x %y %X %Y]
+
+    TreeBuildContextMenu $id
     TreeLoadRoot $id
     TreeSchedulePoll $id
 }
@@ -2403,6 +2411,215 @@ proc ChooseTreeRoot {id} {
     UpdateWindowTitle $id
     UpdateStatus
     TreeLoadRoot $id
+}
+
+# --- Tree context menu ----------------------------------------------------
+
+# Context menu of a tree buffer: create and delete entries relative to the
+# node the right click landed on. One menu per buffer, built with the body;
+# entry indexes stay fixed: New File, New Folder, separator, Delete.
+proc TreeBuildContextMenu {id} {
+    global Buffers Config
+
+    set menu $Buffers($id,window).content.treemenu
+    menu $menu -tearoff 0 \
+        -bg $Config(window_bg) -fg $Config(fg) \
+        -activebackground $Config(sel_bg) -activeforeground $Config(sel_fg) \
+        -disabledforeground $Config(status_fg) \
+        -font $Config(ui_font)
+
+    $menu add command -label "New File"   -command [list TreeCreateEntry $id file]
+    $menu add command -label "New Folder" -command [list TreeCreateEntry $id dir]
+    $menu add separator
+    $menu add command -label "Delete"     -command [list TreeDeleteEntry $id]
+}
+
+# Right click: remember the row as the target of every menu command, select
+# it, and post the menu where the pointer is. A click on empty space keeps
+# the current selection; with no selection the root is the target and Delete
+# is disabled, since the root of a tree buffer is never deletable.
+proc TreeContextMenu {id tree x y X Y} {
+    global Buffers
+    if {![SafeWindowExists $id]} return
+
+    set item [$tree identify item $x $y]
+    if {$item eq ""} { set item [lindex [$tree selection] 0] }
+    if {[TreeIsStub $item]} { set item [string range $item 0 end-1] }
+
+    if {$item ne ""} {
+        # A row whose path vanished (deleted outside the editor) is refreshed
+        # instead of being offered as a stale create/delete target.
+        if {![file exists $item]} {
+            TreeRescan $id
+            return
+        }
+        $tree selection set $item
+        $tree focus $item
+    }
+    set Buffers($id,ctx) $item
+
+    set menu $Buffers($id,window).content.treemenu
+    set root $Buffers($id,path)
+
+    if {$item eq "" || $item eq $root} {
+        $menu entryconfigure 3 -label "Delete" -state disabled
+    } elseif {[file isdirectory $item]} {
+        $menu entryconfigure 3 -label "Delete Folder" -state normal
+    } else {
+        $menu entryconfigure 3 -label "Delete File" -state normal
+    }
+
+    set createState disabled
+    set target [TreeTargetDir $id]
+    if {[file isdirectory $target] && [file writable $target]} {
+        set createState normal
+    }
+    $menu entryconfigure 0 -state $createState
+    $menu entryconfigure 1 -state $createState
+
+    catch {tk_popup $menu $X $Y}
+}
+
+# Directory new entries go into: the clicked directory itself, the parent of
+# a clicked file, or the tree root when nothing is clickable.
+proc TreeTargetDir {id} {
+    global Buffers
+
+    set root $Buffers($id,path)
+    set item ""
+    if {[info exists Buffers($id,ctx)]} { set item $Buffers($id,ctx) }
+
+    if {$item eq ""} { return $root }
+    if {[file isdirectory $item]} { return $item }
+    set dir [file dirname $item]
+    if {[file isdirectory $dir]} { return $dir }
+    return $root
+}
+
+# "New File" / "New Folder": the standard save dialog picks the name, 
+# the entry is created there and then shown in the tree.
+# The dialog starts in the directory the click targeted.
+proc TreeCreateEntry {id kind} {
+    global Buffers
+    if {![SafeWindowExists $id]} return
+
+    set dir [TreeTargetDir $id]
+    if {![file isdirectory $dir]} {
+        tk_messageBox -icon error -title "New" \
+            -message "Cannot create here: '$dir' is not a directory"
+        return
+    }
+
+    set title "New File"
+    if {$kind eq "dir"} { set title "New Folder" }
+
+    # -confirmoverwrite 0: this dialog creates an entry instead of saving
+    # over one, so an existing name is refused below rather than replaced.
+    set path [tk_getSaveFile -title $title -initialdir $dir -confirmoverwrite 0]
+    if {$path eq ""} return
+    set path [file normalize $path]
+    if {![SafeWindowExists $id]} return
+
+    if {[file exists $path]} {
+        tk_messageBox -icon error -title $title -message "Already exists: $path"
+        return
+    }
+
+    if {$kind eq "dir"} {
+        if {[catch {file mkdir $path} err]} {
+            tk_messageBox -icon error -title $title \
+                -message "Cannot create folder: $err"
+            return
+        }
+    } else {
+        if {[catch {
+            set fh [open $path w]
+            close $fh
+        } err]} {
+            tk_messageBox -icon error -title $title \
+                -message "Cannot create file: $err"
+            return
+        }
+    }
+
+    TreeReveal $id $path
+
+    # A dot name stays invisible while hidden entries are off, so say where
+    # it went instead of leaving the tree looking unchanged.
+    if {[string match ".*" [file tail $path]] && ![TreeShowHidden $id] \
+            && [SafeWindowExists $id]} {
+        TreeSetStatus $id "$path (dot entries hidden, Ctrl+H)"
+    }
+}
+
+# Show a new entry in the tree: refill the directory it landed in, expand
+# that directory and select the entry. The save dialog may be navigated
+# anywhere, and a path outside the tree root has no row to show, so it is
+# only reported in the status bar (reloading the root would collapse what
+# the user has opened).
+proc TreeReveal {id path} {
+    global Buffers
+    if {![SafeWindowExists $id]} return
+
+    set tree $Buffers($id,window).content.tree
+    if {![$tree exists $Buffers($id,path)]} {
+        TreeLoadRoot $id
+        return
+    }
+
+    set dir [file dirname $path]
+    if {![file isdirectory $dir] || ![$tree exists $dir]} {
+        TreeSetStatus $id "created outside the tree: $path"
+        return
+    }
+
+    TreePopulate $id $dir
+    $tree item $dir -open 1
+    if {[$tree exists $path]} {
+        $tree selection set $path
+        $tree focus $path
+        $tree see $path
+    }
+}
+
+# "Delete": confirm, remove the file or folder from disk, then refresh the
+# directory that held it. The tree root itself is never deletable.
+proc TreeDeleteEntry {id} {
+    global Buffers
+    if {![SafeWindowExists $id]} return
+
+    set root $Buffers($id,path)
+    set item ""
+    if {[info exists Buffers($id,ctx)]} { set item $Buffers($id,ctx) }
+
+    if {$item eq "" || $item eq $root} return
+    if {![file exists $item]} {
+        TreeRescan $id
+        return
+    }
+
+    set kind "file"
+    if {[file isdirectory $item]} { set kind "folder" }
+
+    set answer [tk_messageBox -icon warning -type yesno -title "Delete" \
+        -message "Delete this $kind?" -detail $item]
+    if {$answer ne "yes"} return
+
+    # -force, not -recursive: file delete has no -recursive option, and it
+    # is -force that descends into a directory.
+    if {[catch {file delete -force -- $item} err]} {
+        tk_messageBox -icon error -title "Delete" -message "Cannot delete: $err"
+        return
+    }
+
+    if {![SafeWindowExists $id]} return
+
+    set tree $Buffers($id,window).content.tree
+    set dir [file dirname $item]
+    if {![file isdirectory $dir] || ![$tree exists $dir]} { set dir $root }
+    if {[$tree exists $dir]} {
+        TreePopulate $id $dir
+    }
 }
 
 # --- About ----------------------------------------------------------------
