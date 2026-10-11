@@ -9,8 +9,7 @@ A small, distraction-free multi-document text editor built on Tcl/Tk and the
 
 - Multiple buffers
 - File tree buffers that follow the filesystem as it changes
-- Syntax highlighting for: Tcl, C, PHP, Go, sh, Markdown, Lua, ..., one file per
-  language in `langs/`
+- Syntax highlighting (languages in `langs/`)
 - Line numbers, status bar with cursor position, and language indicator
 - Find and replace (with case-sensitive toggle)
 - Comment toggling (`#` / `//` based on detected language)
@@ -28,7 +27,7 @@ A small, distraction-free multi-document text editor built on Tcl/Tk and the
 wish mied.tcl
 wish mied.tcl file.txt
 wish mied.tcl file1.md file2.go file3.tcl
-wish mied.tcl -config mied.conf.example file.txt
+wish mied.tcl -config my-theme.conf file.txt
 ```
 
 ### Options
@@ -51,7 +50,13 @@ wish mied.tcl -config my-theme.conf
 ```
 
 A config file is a plain Tcl script that sets `Config(...)` keys; keys it does
-not set keep their default values. See [mied.conf.example](./mied.conf.example).
+not set keep their default values. See [example.conf](./themes/example.conf) and [themes](./themes/) examples:
+
+```sh
+wish mied.tcl -config themes/acme.conf
+wish mied.tcl -config themes/nord.conf
+wish mied.tcl -config themes/xcode.conf
+```
 
 ## Hotkeys
 
@@ -127,9 +132,9 @@ filled in while they are shown.
 | Open    | Open file…            |
 | Tree    | New file tree buffer  |
 | Save    | Save                  |
-| Save As | Save as…            |
-| Buffers | Toggle sidebar      |
-| About   | About dialog        |
+| Save As | Save as…              |
+| Buffers | Toggle sidebar        |
+| About   | About dialog          |
 
 ## Building a standalone binary
 

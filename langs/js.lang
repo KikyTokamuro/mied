@@ -1,0 +1,31 @@
+# langs/js.lang -- javascript syntax support for Mied.
+
+Language js {
+    extensions    {.js .mjs .cjs .jsx}
+    shebang       {node deno bun}
+    line_comment  //
+}
+
+HighlightClass  keywords        keyword  {
+    arguments async await break case catch class const continue
+    debugger default delete do else enum export extends false finally
+    for function get if implements import in instanceof interface let
+    new null of package private protected public return set static
+    super switch this throw true try typeof var void while with yield
+}
+
+HighlightClass  builtins        punct    {
+    Array Boolean Date Error EvalError Function Infinity JSON Math
+    NaN Number Object Promise Proxy RangeError ReferenceError RegExp
+    String SyntaxError TypeError URIError arguments console document
+    globalThis localStorage navigator process require module exports
+    undefined window clearTimeout clearInterval setTimeout setInterval
+}
+
+HighlightRegexp comments        comment  {//[^\n\r]*}
+HighlightRegexp block_comments  comment  {/\*([^*]|\*[^/])*\*/}
+HighlightRegexp strings         string   {"(\\.|[^"\\])*"}
+HighlightRegexp squote          string   {'(\\.|[^'\\])*'}
+HighlightRegexp templates       string   {`([^`\\]|\\.)*`}
+HighlightRegexp numbers         number   {\m(0[xX][0-9a-fA-F]+|0[bB][01]+|0[oO][0-7]+|[0-9]+(\.[0-9]*)?([eE][-+]?[0-9]+)?)\M}
+HighlightChars  punct           punct    {()[]{};,.:=*+-/<>!&|^%~?}

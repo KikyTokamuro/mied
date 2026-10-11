@@ -31,6 +31,13 @@
 # SOFTWARE.
 #
 # Changelog
+#     2026-10-11 version 0.5.0 added "show_scrollbars" to config
+#                              added resizing buffers by dragging any edge
+#                              added keeping buffers inside the window
+#                              added more examples themes
+#                              added treeview context menu with create/delete of files and folders
+#                              added JavaScript syntax support
+#                              default ttk theme
 #     2026-10-02 version 0.4.0 added "syntax_highlight" to config
 #                              added info about build binary
 #                              fixing selecting file in treeview buffer
@@ -51,7 +58,9 @@
 package require Tk
 package require ctext
 
-set Mied(version) "0.4.0"
+catch {ttk::style theme use default}
+
+set Mied(version) "0.5.0"
 set Mied(authors) "Daniil Arkhangelsky (Kiky Tokamuro)"
 set Mied(license) "MIT License, 2026"
 
@@ -69,7 +78,7 @@ set FindCaseSensitive 0
 # --- Layout ---------------------------------------------------------------
 
 set Layout(sidebar_w) 180
-set Layout(gap)       2       ;# gutter between sidebar and desktop
+set Layout(gap)       0       ;# gutter between sidebar and desktop
 
 # Size component of a font descriptor ({family size ?style?}). 9 is the
 # default ui size and the reference for every scaled chrome metric.
@@ -113,45 +122,40 @@ proc ComputeLayout {} {
 proc LoadDefaultConfig {} {
     global Config
 
-    set Config(accent)       "#5d7e73"
-    set Config(bg)           "#e8e8e8"
-    set Config(fg)           "#666666"
-    set Config(toolbar_bg)   "#c8c8c8"
-    set Config(sidebar_bg)   "#c8c8c8"
-    set Config(window_bg)    "#ffffff"
-    set Config(titlebar_bg)  "#c8c8c8"
-    set Config(border)       "#aaaaaa"
-    set Config(font)         {"Fira Code" 10}
-    set Config(font_bold)    {"Fira Code" 10 bold}
-    set Config(ui_font)      {"Fira Code" 9}
-    set Config(status_fg)    "#666666"
-    set Config(close_hover)  "#cc0000"
-    set Config(min_hover)    "#5d7e73"
-    set Config(btn_hover_bg) "#bbbbbb"
-    set Config(hover_fg)     "#000000"
-    set Config(title_fg)     "#444444"
-    set Config(list_fg)      "#444444"
-    set Config(insert_color) "#000000"
-    set Config(sel_bg)       "#5d7e73"
-    set Config(sel_fg)       "#ffffff"
-    set Config(scroll_bg)    "#cccccc"
-    set Config(header_fg)    "#666666"
-    set Config(linenum_bg)   "#f0f0f0"
-    set Config(linenum_fg)   "#888888"
-
-    # File tree buffers start with dot entries hidden; Ctrl+H toggles it.
+    set Config(accent)           "#5d7e73"
+    set Config(bg)               "#e8e8e8"
+    set Config(fg)               "#666666"
+    set Config(toolbar_bg)       "#c8c8c8"
+    set Config(sidebar_bg)       "#c8c8c8"
+    set Config(window_bg)        "#ffffff"
+    set Config(titlebar_bg)      "#c8c8c8"
+    set Config(border)           "#aaaaaa"
+    set Config(font)             {"FiraCode Nerd Font" 10}
+    set Config(font_bold)        {"FiraCode Nerd Font" 10 bold}
+    set Config(ui_font)          {"FiraCode Nerd Font" 9}
+    set Config(status_fg)        "#666666"
+    set Config(close_hover)      "#cc0000"
+    set Config(min_hover)        "#5d7e73"
+    set Config(btn_hover_bg)     "#bbbbbb"
+    set Config(hover_fg)         "#000000"
+    set Config(title_fg)         "#444444"
+    set Config(list_fg)          "#444444"
+    set Config(insert_color)     "#000000"
+    set Config(sel_bg)           "#5d7e73"
+    set Config(sel_fg)           "#ffffff"
+    set Config(scroll_bg)        "#cccccc"
+    set Config(header_fg)        "#666666"
+    set Config(linenum_bg)       "#f0f0f0"
+    set Config(linenum_fg)       "#888888"
+    set Config(show_scrollbars)  1
     set Config(tree_show_hidden) 0
-
-    # Syntax highlighting is on by default; 0 renders buffers as plain text.
     set Config(syntax_highlight) 1
-
-    # Monochrome highlight
-    set Config(hl_keyword)   "#222222"
-    set Config(hl_comment)   "#9a9a9a"
-    set Config(hl_string)    "#555555"
-    set Config(hl_number)    "#333333"
-    set Config(hl_punct)     "#777777"
-    set Config(hl_preproc)   "#444444"
+    set Config(hl_keyword)       "#222222"
+    set Config(hl_comment)       "#9a9a9a"
+    set Config(hl_string)        "#555555"
+    set Config(hl_number)        "#333333"
+    set Config(hl_punct)         "#777777"
+    set Config(hl_preproc)       "#444444"
 }
 
 # Source a user config file over the defaults. The file is plain Tcl and can
@@ -236,38 +240,102 @@ proc PlaceDesktop {} {
 # Geometry of a maximized buffer: inset by Layout(gap) so the desktop
 # background shows as a rim (same idea as the strip under the toolbar).
 proc MaximizedGeom {} {
-    global Desktop Layout
+    global Layout
     set g $Layout(gap)
-    set dw [winfo width $Desktop]
-    set dh [winfo height $Desktop]
+    lassign [DesktopBounds] dw dh
     return [list $g $g [expr {max(50, $dw - 2 * $g)}] [expr {max(50, $dh - 2 * $g)}]]
 }
 
-# Distance from the window bottom to the resize grip: above the status bar
-# and, when the find bar is open, above that as well. Bar heights are measured
-# from the widgets, since the bars size themselves from their contents.
-proc ResizeHandleOffset {id} {
-    global Buffers
+# Edge bands that make a buffer resizable from every side and corner.
+# moves. They are children of the buffer window and sit above its title bar,
+# content and status bar, so they are raised last.
+proc BuildResizeEdges {id} {
+    global Buffers Config
 
     set win $Buffers($id,window)
-    set yOff [winfo reqheight $win.statusbar]
-    if {[info exists Buffers($id,findbar)] && $Buffers($id,findbar) \
-            && [winfo exists $win.findbar]} {
-        incr yOff [winfo reqheight $win.findbar]
+
+    foreach side {n s w e nw ne sw se} {
+        set cursor sizing
+        switch -- $side {
+            n - s { set cursor sb_v_double_arrow }
+            w - e { set cursor sb_h_double_arrow }
+        }
+        set edge $win.resize_$side
+        frame $edge -bg $Config(border) -cursor $cursor
+        bind $edge <ButtonPress-1> [list StartResize %W %X %Y $id $side]
+        bind $edge <B1-Motion>     [list OnResize %W %X %Y $id]
     }
-    return [expr {-$yOff}]
+
+    PlaceResizeEdges $id
 }
 
-# Pins the resize grip above the status bar (and findbar, if shown).
-proc PlaceResizeHandle {id} {
-	global Buffers
-	if {![SafeWindowExists $id]} return
-	if {![info exists Buffers($id,visible)] || !$Buffers($id,visible)} return
+# Lay the edge bands along the current window sides. Relative placement keeps
+# them in step with later resizes, so nothing needs repositioning by hand.
+proc PlaceResizeEdges {id} {
+    global Buffers
+
+    if {![SafeWindowExists $id]} return
 
     set win $Buffers($id,window)
-    set yOff [ResizeHandleOffset $id]
-    place $win.resize -relx 1.0 -rely 1.0 -anchor se -y $yOff
-    raise $win.resize
+    if {![winfo exists $win.resize_n]} return
+
+    if {[winfo manager $win.resize_n] eq "place"} {
+        foreach side {n s w e nw ne sw se} {
+            raise $win.resize_$side
+        }
+        return
+    }
+
+    set resizeBorderSize 1
+    set resizeCornerSize 1
+
+    place $win.resize_n  -x 0 -y 0 -relwidth 1.0 -height $resizeBorderSize
+    place $win.resize_s  -x 0 -rely 1.0 -anchor sw -relwidth 1.0 -height $resizeBorderSize
+    place $win.resize_w  -x 0 -y 0 -relheight 1.0 -width $resizeBorderSize
+    place $win.resize_e  -relx 1.0 -y 0 -anchor ne -relheight 1.0 -width $resizeBorderSize
+
+    place $win.resize_nw -x 0 -y 0 -width $resizeCornerSize -height $resizeCornerSize
+    place $win.resize_ne -relx 1.0 -y 0 -anchor ne -width $resizeCornerSize -height $resizeCornerSize
+    place $win.resize_sw -x 0 -rely 1.0 -anchor sw -width $resizeCornerSize -height $resizeCornerSize
+    place $win.resize_se -relx 1.0 -rely 1.0 -anchor se -width $resizeCornerSize -height $resizeCornerSize
+
+    foreach side {n s w e nw ne sw se} {
+        raise $win.resize_$side
+    }
+}
+
+# Drop the edge bands.
+proc HideResizeEdges {id} {
+    global Buffers
+
+    if {![SafeWindowExists $id]} return
+
+    set win $Buffers($id,window)
+    foreach side {n s w e nw ne sw se} {
+        if {[winfo exists $win.resize_$side]} {
+            place forget $win.resize_$side
+        }
+    }
+}
+
+# The edge bands belong to the active buffer only: activating a buffer moves
+# them there and drops them everywhere else.
+# A minimized window keeps its own hidden until restored.
+proc SyncResizeEdges {} {
+    global Buffers ActiveBufferId
+
+    foreach key [array names Buffers *,window] {
+        set id [lindex [split $key ","] 0]
+        set keep [expr {$id eq $ActiveBufferId && \
+            [SafeWindowExists $id] && \
+            [info exists Buffers($id,visible)] && $Buffers($id,visible)}]
+
+        if {$keep} {
+            PlaceResizeEdges $id
+        } else {
+            HideResizeEdges $id
+        }
+    }
 }
 
 # Flat canvas button. Uses grid when -row/-column is present, otherwise pack.
@@ -687,7 +755,7 @@ proc CreateWindow {id} {
     set x [expr {max(1, ($desktopW - $bufferW) / 2 + $col * $step)}]
     set y [expr {max(1, ($desktopH - $bufferH) / 2 + $row * $step)}]
 
-    frame $win -bg $Config(border) -bd 1 -relief flat
+    frame $win -relief flat
 
     frame $win.titlebar -bg $Config(titlebar_bg) -height $Layout(titlebar_h) -cursor fleur
     grid $win.titlebar -row 0 -column 0 -sticky ew
@@ -731,9 +799,6 @@ proc CreateWindow {id} {
     } else {
         BuildEditorBody $id
     }
-
-    # Sized from the scrollbars below; 17x15 is only the fallback size.
-    frame $win.resize -bg $Config(border) -cursor sizing -width 17 -height 15
 
     frame $win.statusbar -bg $Config(titlebar_bg) -height $Layout(statusbar_h)
     grid $win.statusbar -row 2 -column 0 -sticky ew
@@ -782,20 +847,7 @@ proc CreateWindow {id} {
     place $win -x $x -y $y -width 500 -height 350
     update idletasks
 
-    # The grip fills the corner between the scrollbars, so it follows their
-    # thickness instead of scaling with the font. A tree buffer has only the
-    # vertical bar, in which case the grip is square.
-    set gripW [winfo width $win.content.vsb]
-    set gripH 0
-    if {[winfo exists $win.content.hsb]} {
-        set gripH [winfo height $win.content.hsb]
-    }
-    if {$gripW > 1 && $gripH > 1} {
-        $win.resize configure -width $gripW -height $gripH
-    } elseif {$gripW > 1} {
-        $win.resize configure -width $gripW -height $gripW
-    }
-    PlaceResizeHandle $id
+    BuildResizeEdges $id
     raise $win
     incr ::ZIndex
 
@@ -806,9 +858,6 @@ proc CreateWindow {id} {
     bind $win.titlebar.label <ButtonPress-1>   [list StartDrag %W %X %Y $id]
     bind $win.titlebar.label <B1-Motion>       [list OnDrag %W %X %Y $id]
     bind $win.titlebar.label <Double-Button-1> [list ToggleMaximize $id]
-
-    bind $win.resize <ButtonPress-1> [list StartResize %W %X %Y $id]
-    bind $win.resize <B1-Motion>     [list OnResize %W %X %Y $id]
 
     bind $win <Button-1> [list ActivateWindow $id]
 
@@ -843,16 +892,28 @@ proc CreateWindow {id} {
     UpdateLineCounter $id
 }
 
-# Body of an editor buffer: the ctext widget and its two scrollbars.
+# Body of an editor buffer: the ctext widget and its scrollbars. When
+# Config(show_scrollbars) is off the bars are not created at all, and the
+# scroll commands are left unset so the widget never calls a missing command.
 proc BuildEditorBody {id} {
     global Buffers Config
 
     set win $Buffers($id,window)
+    set vsb $win.content.vsb
+    set hsb $win.content.hsb
+
+    set scrollArgs {}
+    if {$Config(show_scrollbars)} {
+        ttk::scrollbar $vsb -orient vertical   -command [list $win.content.ctext yview]
+        ttk::scrollbar $hsb -orient horizontal -command [list $win.content.ctext xview]
+        set scrollArgs [list \
+            -yscrollcommand [list $vsb set] \
+            -xscrollcommand [list $hsb set]]
+    }
 
     ctext $win.content.ctext -bg $Config(window_bg) -fg $Config(fg) \
         -font $Config(font) -wrap none \
-        -yscrollcommand [list $win.content.vsb set] \
-        -xscrollcommand [list $win.content.hsb set] \
+        {*}$scrollArgs \
         -undo 1 -maxundo 100 \
         -insertbackground $Config(insert_color) \
         -selectbackground $Config(sel_bg) \
@@ -866,19 +927,25 @@ proc BuildEditorBody {id} {
         -linemap_select_bg $Config(sel_bg) \
         -tabs [font measure $Config(font) "    "]
 
+    # The line-number gutter is a nested text widget that keeps text's default
+    # highlight ring (3px, system highlight color), which shows as a light
+    # border around the linemap background on dark themes.
+    catch {
+        $win.content.ctext.l configure \
+            -highlightthickness 0 -borderwidth 0 \
+            -highlightbackground $Config(linenum_bg)
+    }
+
     $win.content.ctext tag configure found \
         -background $Config(accent) \
         -foreground $Config(insert_color)
     $win.content.ctext tag raise found
 
-    ttk::scrollbar $win.content.vsb -orient vertical \
-        -command [list $win.content.ctext yview]
-    ttk::scrollbar $win.content.hsb -orient horizontal \
-        -command [list $win.content.ctext xview]
-
     grid $win.content.ctext -row 0 -column 0 -sticky nsew
-    grid $win.content.vsb   -row 0 -column 1 -sticky ns
-    grid $win.content.hsb   -row 1 -column 0 -sticky ew
+    if {$Config(show_scrollbars)} {
+        grid $vsb -row 0 -column 1 -sticky ns
+        grid $hsb -row 1 -column 0 -sticky ew
+    }
     grid rowconfigure    $win.content 0 -weight 1
     grid columnconfigure $win.content 0 -weight 1
 }
@@ -979,8 +1046,8 @@ proc MinimizeWindow {id} {
         grid forget $win.content
         grid forget $win.statusbar
         if {[winfo exists $win.findbar]} { grid forget $win.findbar }
-        place forget $win.resize
-        place $win -height [expr {[winfo reqheight $win.titlebar] + 2}]
+        HideResizeEdges $id
+        place $win -height [winfo reqheight $win.titlebar]
         set Buffers($id,visible) 0
     } else {
         grid $win.content   -row 1 -column 0 -sticky nsew
@@ -994,7 +1061,7 @@ proc MinimizeWindow {id} {
         }
         place $win -height $h
         set Buffers($id,visible) 1
-        PlaceResizeHandle $id
+        SyncResizeEdges
     }
     UpdateBufferList
 }
@@ -1005,7 +1072,6 @@ proc RaiseWindow {id} {
     incr ZIndex
     if {[SafeWindowExists $id]} {
         raise $Buffers($id,window)
-        PlaceResizeHandle $id
     }
 }
 
@@ -1019,6 +1085,7 @@ proc ActivateWindow {id} {
 proc SetActiveBuffer {id} {
     global ActiveBufferId
     set ActiveBufferId $id
+    SyncResizeEdges
     UpdateBufferList
     UpdateStatus
 }
@@ -1128,45 +1195,118 @@ proc StartDrag {widget x y id} {
     ActivateWindow $id
 }
 
-# Move the window by the mouse delta; Y stays >= 1.
+# Move the window by the mouse delta, keeping it inside the buffer area:
+# X stays within [0, width - window width] and Y within [0, height - window
+# height], with the bounds coming from DesktopBounds (the main window minus
+# the toolbar strip and the offset where the buffer panel ends). A buffer
+# therefore never covers the toolbar or the buffer panel, and never leaves
+# the main window on the right or at the bottom.
 proc OnDrag {widget x y id} {
     global DragStart DragWin Buffers
+
     if {![info exists DragWin]} return
     if {![winfo exists $DragWin]} return
 
+    lassign [DesktopBounds] availW availH
+    if {$availW < 1 || $availH < 1} return
+
     set dx [expr {$x - $DragStart(x)}]
     set dy [expr {$y - $DragStart(y)}]
-    set newX [expr {[winfo x $DragWin] + $dx}]
-    set newY [expr {max(1, [winfo y $DragWin] + $dy)}]
+
+    set maxX [expr {max(0, $availW - [winfo width $DragWin])}]
+    set maxY [expr {max(0, $availH - [winfo height $DragWin])}]
+
+    set newX [expr {min($maxX, max(0, [winfo x $DragWin] + $dx))}]
+    set newY [expr {min($maxY, max(0, [winfo y $DragWin] + $dy))}]
+
     place $DragWin -x $newX -y $newY
     set DragStart(x) $x
     set DragStart(y) $y
     set Buffers($id,maximized) 0
 }
 
-# Snapshot size when the resize grip is pressed.
-proc StartResize {widget x y id} {
+# Snapshot geometry when an edge or corner is pressed. side names the edges
+# that may move: n/s/w/e, or a corner such as nw.
+proc StartResize {widget x y id side} {
     global ResizeStart ResizeWin
     set ResizeWin [winfo parent $widget]
     set ResizeStart(x) $x
     set ResizeStart(y) $y
+    set ResizeStart(X) [winfo x $ResizeWin]
+    set ResizeStart(Y) [winfo y $ResizeWin]
     set ResizeStart(w) [winfo width $ResizeWin]
     set ResizeStart(h) [winfo height $ResizeWin]
+    set ResizeStart(side) $side
     ActivateWindow $id
 }
 
-# Resize; minimum 200×150.
+# Resize from the dragged edge, leaving the opposite edge in place; minimum
+# 200×150. The dragged edge is also kept inside the buffer area (same
+# DesktopBounds the drag uses), so a resize cannot push any part of the
+# window over the toolbar, the buffer panel or the main window's edges.
 proc OnResize {widget x y id} {
     global ResizeStart ResizeWin Buffers
     if {![info exists ResizeWin]} return
     if {![winfo exists $ResizeWin]} return
 
+    lassign [DesktopBounds] deskW deskH
+    if {$deskW < 1 || $deskH < 1} return
+
     set dx [expr {$x - $ResizeStart(x)}]
     set dy [expr {$y - $ResizeStart(y)}]
+    set side $ResizeStart(side)
 
-    set newW [expr {max(200, $ResizeStart(w) + $dx)}]
-    set newH [expr {max(150, $ResizeStart(h) + $dy)}]
-    place $ResizeWin -width $newW -height $newH
+    set X $ResizeStart(X)
+    set Y $ResizeStart(Y)
+    set W $ResizeStart(w)
+    set H $ResizeStart(h)
+
+    set minW 200
+    set minH 150
+
+    if {[string first "w" $side] >= 0} {
+        set W [expr {$ResizeStart(w) - $dx}]
+        if {$W < $minW} {
+            set W $minW
+            set X [expr {$ResizeStart(X) + $ResizeStart(w) - $minW}]
+        } else {
+            set X [expr {$ResizeStart(X) + $dx}]
+        }
+    }
+    if {[string first "e" $side] >= 0} {
+        set W [expr {$ResizeStart(w) + $dx}]
+        if {$W < $minW} { set W $minW }
+    }
+    if {[string first "n" $side] >= 0} {
+        set H [expr {$ResizeStart(h) - $dy}]
+        if {$H < $minH} {
+            set H $minH
+            set Y [expr {$ResizeStart(Y) + $ResizeStart(h) - $minH}]
+        } else {
+            set Y [expr {$ResizeStart(Y) + $dy}]
+        }
+    }
+    if {[string first "s" $side] >= 0} {
+        set H [expr {$ResizeStart(h) + $dy}]
+        if {$H < $minH} { set H $minH }
+    }
+
+    # Keep the window inside the buffer area on all four sides: the edge
+    # being dragged may not cross a border, and the opposite edge stays put.
+    # Shrinking W/H moves only the edge being dragged, while pulling X/Y back
+    # to the border keeps the far edge where it was.
+    if {$X < 0} {
+        set W [expr {$W + $X}]
+        set X 0
+    }
+    if {$Y < 0} {
+        set H [expr {$H + $Y}]
+        set Y 0
+    }
+    if {$X + $W > $deskW} { set W [expr {$deskW - $X}] }
+    if {$Y + $H > $deskH} { set H [expr {$deskH - $Y}] }
+
+    place $ResizeWin -x $X -y $Y -width $W -height $H
     set Buffers($id,maximized) 0
 }
 
@@ -1200,16 +1340,13 @@ proc ToggleMaximize {id} {
         place $win -x $mx -y $my -width $mw -height $mh
         set Buffers($id,maximized) 1
     }
-    PlaceResizeHandle $id
 }
 
 # --- Files ----------------------------------------------------------------
 
 # Open-file dialog.
 proc OpenFile {} {
-    set types {
-        {{All Files} *}
-    }
+    set types {{{All Files} *}}
 
     set filename [tk_getOpenFile -filetypes $types -title "Open File"]
     if {$filename eq ""} return
@@ -1285,19 +1422,7 @@ proc SaveAsBuffer {id} {
     if {![info exists Buffers($id,id)]} return
     if {![IsEditor $id]} return
 
-    set types {
-        {{All Files}      *}
-        {{Tcl Files}      {.tcl}}
-        {{C Files}        {.c .h}}
-        {{Forth Files}    {.fs .fth .forth .4th .f83 .fb}}
-        {{HTML/XML Files} {.html .htm .xhtml .shtml .xml}}
-        {{PHP Files}      {.php .phtml}}
-        {{Go Files}       {.go}}
-        {{Lua Files}      {.lua}}
-        {{Shell Files}    {.sh}}
-        {{Markdown Files} {.md .markdown .mdown .mkdn .mkd}}
-        {{Text Files}     {.txt}}
-    }
+    set types {{{All Files} *}}
 
     set filename [tk_getSaveFile -filetypes $types -title "Save As"]
     if {$filename eq ""} return
@@ -1371,10 +1496,29 @@ proc RelayoutMaximized {} {
             set id [lindex [split $key ","] 0]
             if {[SafeWindowExists $id]} {
                 place $Buffers($id,window) -x $mx -y $my -width $mw -height $mh
-                PlaceResizeHandle $id
             }
         }
     }
+}
+
+# Available area for buffer windows, in .desktop coordinates, measured off
+# the main window ".": its width minus the offset where .desktop starts (the
+# buffer panel), and its height minus the toolbar strip. The right and
+# bottom edges therefore stop at the main window, while the left edge is the
+# buffer panel and the top edge is the toolbar -- a buffer never overlaps
+# either. Returns {width height}, or {0 0} until "." is mapped.
+proc DesktopBounds {} {
+    global Layout
+    if {![winfo exists .]} { return [list 0 0] }
+    if {![info exists Layout(toolbar_h)]} { return [list 0 0] }
+
+    set dx 0
+    if {[winfo exists .desktop]} { set dx [winfo x .desktop] }
+
+    set w [expr {[winfo width .] - $dx}]
+    set h [expr {[winfo height .] - $Layout(toolbar_h)}]
+    if {$w < 1 || $h < 1} { return [list 0 0] }
+    return [list $w $h]
 }
 
 # Toolbar, sidebar, desktop, and global hotkeys.
@@ -1558,7 +1702,6 @@ proc ShowFindBar {id} {
     set win $Buffers($id,window)
     set Buffers($id,findbar) 1
     grid $win.findbar -row 3 -column 0 -sticky ew
-    PlaceResizeHandle $id
     focus $win.findbar.find
 }
 
@@ -1572,7 +1715,6 @@ proc HideFindBar {id} {
     $win.content.ctext tag remove found 1.0 end
     grid forget $win.findbar
     set Buffers($id,findbar) 0
-    PlaceResizeHandle $id
     focus $win.content.ctext
 }
 
@@ -1857,12 +1999,19 @@ proc BuildTreeBody {id} {
         -background [list selected $Config(sel_bg)] \
         -foreground [list selected $Config(sel_fg)]
 
-    ttk::treeview $tree -style Mied.Treeview -show tree -selectmode browse \
-        -yscrollcommand [list $win.content.vsb set]
-    ttk::scrollbar $win.content.vsb -orient vertical -command [list $tree yview]
+    set scrollArgs {}
+    if {$Config(show_scrollbars)} {
+        ttk::scrollbar $win.content.vsb -orient vertical -command [list $tree yview]
+        set scrollArgs [list -yscrollcommand [list $win.content.vsb set]]
+    }
 
-    grid $tree            -row 0 -column 0 -sticky nsew
-    grid $win.content.vsb -row 0 -column 1 -sticky ns
+    ttk::treeview $tree -style Mied.Treeview -show tree -selectmode browse \
+        {*}$scrollArgs
+
+    grid $tree -row 0 -column 0 -sticky nsew
+    if {$Config(show_scrollbars)} {
+        grid $win.content.vsb -row 0 -column 1 -sticky ns
+    }
     grid rowconfigure    $win.content 0 -weight 1
     grid columnconfigure $win.content 0 -weight 1
     $tree column "#0" -stretch 1
@@ -1877,6 +2026,13 @@ proc BuildTreeBody {id} {
     bind $tree <Control-H>       [list TreeToggleHidden $id]
     bind $tree <Control-w>       [list CloseBuffer $id]
 
+    # Right click pops the create/delete menu. Button-2 and Control-Button-1
+    # cover macOS, where a right click may arrive as either of those.
+    bind $tree <Button-3>         [list TreeContextMenu $id %W %x %y %X %Y]
+    bind $tree <Button-2>         [list TreeContextMenu $id %W %x %y %X %Y]
+    bind $tree <Control-Button-1> [list TreeContextMenu $id %W %x %y %X %Y]
+
+    TreeBuildContextMenu $id
     TreeLoadRoot $id
     TreeSchedulePoll $id
 }
@@ -2245,6 +2401,215 @@ proc ChooseTreeRoot {id} {
     UpdateWindowTitle $id
     UpdateStatus
     TreeLoadRoot $id
+}
+
+# --- Tree context menu ----------------------------------------------------
+
+# Context menu of a tree buffer: create and delete entries relative to the
+# node the right click landed on. One menu per buffer, built with the body;
+# entry indexes stay fixed: New File, New Folder, separator, Delete.
+proc TreeBuildContextMenu {id} {
+    global Buffers Config
+
+    set menu $Buffers($id,window).content.treemenu
+    menu $menu -tearoff 0 \
+        -bg $Config(window_bg) -fg $Config(fg) \
+        -activebackground $Config(sel_bg) -activeforeground $Config(sel_fg) \
+        -disabledforeground $Config(status_fg) \
+        -font $Config(ui_font)
+
+    $menu add command -label "New File"   -command [list TreeCreateEntry $id file]
+    $menu add command -label "New Folder" -command [list TreeCreateEntry $id dir]
+    $menu add separator
+    $menu add command -label "Delete"     -command [list TreeDeleteEntry $id]
+}
+
+# Right click: remember the row as the target of every menu command, select
+# it, and post the menu where the pointer is. A click on empty space keeps
+# the current selection; with no selection the root is the target and Delete
+# is disabled, since the root of a tree buffer is never deletable.
+proc TreeContextMenu {id tree x y X Y} {
+    global Buffers
+    if {![SafeWindowExists $id]} return
+
+    set item [$tree identify item $x $y]
+    if {$item eq ""} { set item [lindex [$tree selection] 0] }
+    if {[TreeIsStub $item]} { set item [string range $item 0 end-1] }
+
+    if {$item ne ""} {
+        # A row whose path vanished (deleted outside the editor) is refreshed
+        # instead of being offered as a stale create/delete target.
+        if {![file exists $item]} {
+            TreeRescan $id
+            return
+        }
+        $tree selection set $item
+        $tree focus $item
+    }
+    set Buffers($id,ctx) $item
+
+    set menu $Buffers($id,window).content.treemenu
+    set root $Buffers($id,path)
+
+    if {$item eq "" || $item eq $root} {
+        $menu entryconfigure 3 -label "Delete" -state disabled
+    } elseif {[file isdirectory $item]} {
+        $menu entryconfigure 3 -label "Delete Folder" -state normal
+    } else {
+        $menu entryconfigure 3 -label "Delete File" -state normal
+    }
+
+    set createState disabled
+    set target [TreeTargetDir $id]
+    if {[file isdirectory $target] && [file writable $target]} {
+        set createState normal
+    }
+    $menu entryconfigure 0 -state $createState
+    $menu entryconfigure 1 -state $createState
+
+    catch {tk_popup $menu $X $Y}
+}
+
+# Directory new entries go into: the clicked directory itself, the parent of
+# a clicked file, or the tree root when nothing is clickable.
+proc TreeTargetDir {id} {
+    global Buffers
+
+    set root $Buffers($id,path)
+    set item ""
+    if {[info exists Buffers($id,ctx)]} { set item $Buffers($id,ctx) }
+
+    if {$item eq ""} { return $root }
+    if {[file isdirectory $item]} { return $item }
+    set dir [file dirname $item]
+    if {[file isdirectory $dir]} { return $dir }
+    return $root
+}
+
+# "New File" / "New Folder": the standard save dialog picks the name, 
+# the entry is created there and then shown in the tree.
+# The dialog starts in the directory the click targeted.
+proc TreeCreateEntry {id kind} {
+    global Buffers
+    if {![SafeWindowExists $id]} return
+
+    set dir [TreeTargetDir $id]
+    if {![file isdirectory $dir]} {
+        tk_messageBox -icon error -title "New" \
+            -message "Cannot create here: '$dir' is not a directory"
+        return
+    }
+
+    set title "New File"
+    if {$kind eq "dir"} { set title "New Folder" }
+
+    # -confirmoverwrite 0: this dialog creates an entry instead of saving
+    # over one, so an existing name is refused below rather than replaced.
+    set path [tk_getSaveFile -title $title -initialdir $dir -confirmoverwrite 0]
+    if {$path eq ""} return
+    set path [file normalize $path]
+    if {![SafeWindowExists $id]} return
+
+    if {[file exists $path]} {
+        tk_messageBox -icon error -title $title -message "Already exists: $path"
+        return
+    }
+
+    if {$kind eq "dir"} {
+        if {[catch {file mkdir $path} err]} {
+            tk_messageBox -icon error -title $title \
+                -message "Cannot create folder: $err"
+            return
+        }
+    } else {
+        if {[catch {
+            set fh [open $path w]
+            close $fh
+        } err]} {
+            tk_messageBox -icon error -title $title \
+                -message "Cannot create file: $err"
+            return
+        }
+    }
+
+    TreeReveal $id $path
+
+    # A dot name stays invisible while hidden entries are off, so say where
+    # it went instead of leaving the tree looking unchanged.
+    if {[string match ".*" [file tail $path]] && ![TreeShowHidden $id] \
+            && [SafeWindowExists $id]} {
+        TreeSetStatus $id "$path (dot entries hidden, Ctrl+H)"
+    }
+}
+
+# Show a new entry in the tree: refill the directory it landed in, expand
+# that directory and select the entry. The save dialog may be navigated
+# anywhere, and a path outside the tree root has no row to show, so it is
+# only reported in the status bar (reloading the root would collapse what
+# the user has opened).
+proc TreeReveal {id path} {
+    global Buffers
+    if {![SafeWindowExists $id]} return
+
+    set tree $Buffers($id,window).content.tree
+    if {![$tree exists $Buffers($id,path)]} {
+        TreeLoadRoot $id
+        return
+    }
+
+    set dir [file dirname $path]
+    if {![file isdirectory $dir] || ![$tree exists $dir]} {
+        TreeSetStatus $id "created outside the tree: $path"
+        return
+    }
+
+    TreePopulate $id $dir
+    $tree item $dir -open 1
+    if {[$tree exists $path]} {
+        $tree selection set $path
+        $tree focus $path
+        $tree see $path
+    }
+}
+
+# "Delete": confirm, remove the file or folder from disk, then refresh the
+# directory that held it. The tree root itself is never deletable.
+proc TreeDeleteEntry {id} {
+    global Buffers
+    if {![SafeWindowExists $id]} return
+
+    set root $Buffers($id,path)
+    set item ""
+    if {[info exists Buffers($id,ctx)]} { set item $Buffers($id,ctx) }
+
+    if {$item eq "" || $item eq $root} return
+    if {![file exists $item]} {
+        TreeRescan $id
+        return
+    }
+
+    set kind "file"
+    if {[file isdirectory $item]} { set kind "folder" }
+
+    set answer [tk_messageBox -icon warning -type yesno -title "Delete" \
+        -message "Delete this $kind?" -detail $item]
+    if {$answer ne "yes"} return
+
+    # -force, not -recursive: file delete has no -recursive option, and it
+    # is -force that descends into a directory.
+    if {[catch {file delete -force -- $item} err]} {
+        tk_messageBox -icon error -title "Delete" -message "Cannot delete: $err"
+        return
+    }
+
+    if {![SafeWindowExists $id]} return
+
+    set tree $Buffers($id,window).content.tree
+    set dir [file dirname $item]
+    if {![file isdirectory $dir] || ![$tree exists $dir]} { set dir $root }
+    if {[$tree exists $dir]} {
+        TreePopulate $id $dir
+    }
 }
 
 # --- About ----------------------------------------------------------------
