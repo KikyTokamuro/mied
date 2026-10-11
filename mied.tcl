@@ -31,12 +31,13 @@
 # SOFTWARE.
 #
 # Changelog
-#              - version 0.5.0 added "show_scrollbars" to config
+#     2026-10-11 version 0.5.0 added "show_scrollbars" to config
 #                              added resizing buffers by dragging any edge
 #                              added keeping buffers inside the window
 #                              added more examples themes
 #                              added treeview context menu with create/delete of files and folders
 #                              added JavaScript syntax support
+#                              default ttk theme
 #     2026-10-02 version 0.4.0 added "syntax_highlight" to config
 #                              added info about build binary
 #                              fixing selecting file in treeview buffer
@@ -57,7 +58,9 @@
 package require Tk
 package require ctext
 
-set Mied(version) "0.5.0-dev"
+catch {ttk::style theme use default}
+
+set Mied(version) "0.5.0"
 set Mied(authors) "Daniil Arkhangelsky (Kiky Tokamuro)"
 set Mied(license) "MIT License, 2026"
 
