@@ -36,6 +36,7 @@
 #                              added keeping buffers inside the window
 #                              added more examples themes
 #                              added treeview context menu with create/delete of files and folders
+#                              added JavaScript syntax support
 #     2026-10-02 version 0.4.0 added "syntax_highlight" to config
 #                              added info about build binary
 #                              fixing selecting file in treeview buffer
@@ -1342,9 +1343,7 @@ proc ToggleMaximize {id} {
 
 # Open-file dialog.
 proc OpenFile {} {
-    set types {
-        {{All Files} *}
-    }
+    set types {{{All Files} *}}
 
     set filename [tk_getOpenFile -filetypes $types -title "Open File"]
     if {$filename eq ""} return
@@ -1420,19 +1419,7 @@ proc SaveAsBuffer {id} {
     if {![info exists Buffers($id,id)]} return
     if {![IsEditor $id]} return
 
-    set types {
-        {{All Files}      *}
-        {{Tcl Files}      {.tcl}}
-        {{C Files}        {.c .h}}
-        {{Forth Files}    {.fs .fth .forth .4th .f83 .fb}}
-        {{HTML/XML Files} {.html .htm .xhtml .shtml .xml}}
-        {{PHP Files}      {.php .phtml}}
-        {{Go Files}       {.go}}
-        {{Lua Files}      {.lua}}
-        {{Shell Files}    {.sh}}
-        {{Markdown Files} {.md .markdown .mdown .mkdn .mkd}}
-        {{Text Files}     {.txt}}
-    }
+    set types {{{All Files} *}}
 
     set filename [tk_getSaveFile -filetypes $types -title "Save As"]
     if {$filename eq ""} return
