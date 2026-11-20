@@ -68,7 +68,7 @@ wish mied.tcl -config themes/xcode.conf
 | `Ctrl`+`O`           | Open file…                            |
 | `Ctrl`+`T`           | New file tree buffer                  |
 | `Ctrl`+`S`           | Save                                  |
-| `Ctrl`+`B`           | Toggle sidebar                        |
+| `Ctrl`+`B`           | Open or activate buffer tree          |
 | `Ctrl`+`F`           | Show find bar                         |
 | `Ctrl`+`Tab`         | Next buffer                           |
 | `Ctrl`+`Shift`+`Tab` | Previous buffer                       |
@@ -104,7 +104,7 @@ Mouse buttons on the find bar:
 
 `Ctrl`+`T` (or the `Tree` toolbar button) opens a file tree buffer for the
 directory of the active buffer, or for the working directory when no file is
-open. The tree is a normal buffer: it appears in the sidebar, can be moved,
+open. The tree is a normal buffer: it appears in tree buffer, can be moved,
 resized, minimized, and closed like any other.
 
 | Action                   | Result                                   |
@@ -135,7 +135,7 @@ filled in while they are shown.
 | Tree    | New file tree buffer  |
 | Save    | Save                  |
 | Save As | Save as…              |
-| Buffers | Toggle sidebar        |
+| Buffers | Open buffer tree      |
 | About   | About dialog          |
 
 ## Building a standalone binary
