@@ -15,11 +15,13 @@ A small, distraction-free multi-document text editor built on Tcl/Tk and the
 - Comment toggling (`#` / `//` based on detected language)
 - Smart indent / outdent and return-indent
 - Tear-off editor windows you can move and resize freely
+- Drag and drop files and folders from the desktop (requires `tkdnd`)
 
 ## Requirements
 
 - Tcl/Tk 8.5 or newer
 - Tklib (`ctext` widget)
+- Optional: TkDND for drag and drop
 
 ## Usage
 

@@ -31,6 +31,7 @@
 # SOFTWARE.
 #
 # Changelog
+#              - version 0.6.0 added drag and drop of files and folders
 #     2026-10-11 version 0.5.0 added "show_scrollbars" to config
 #                              added resizing buffers by dragging any edge
 #                              added keeping buffers inside the window
@@ -58,9 +59,15 @@
 package require Tk
 package require ctext
 
+# Optional drag and drop
+set Mied(dnd_support) 0
+if {![catch {package require tkdnd}]} {
+    set Mied(dnd_support) 1
+}
+
 catch {ttk::style theme use default}
 
-set Mied(version) "0.5.0"
+set Mied(version) "0.6.0"
 set Mied(authors) "Daniil Arkhangelsky (Kiky Tokamuro)"
 set Mied(license) "MIT License, 2026"
 
@@ -890,6 +897,7 @@ proc CreateWindow {id} {
 
     ActivateWindow $id
     UpdateLineCounter $id
+    SetupDropTarget $id
 }
 
 # Body of an editor buffer: the ctext widget and its scrollbars. When
@@ -1473,6 +1481,57 @@ proc CloseBuffer {id} {
     UpdateBufferList
 }
 
+# --- Drag and drop --------------------------------------------------------
+
+# Register widgets as file drop targets and bind the shared handlers.
+proc RegisterDropTargets {widgets dropCmd} {
+    foreach w $widgets {
+        if {![winfo exists $w]} continue
+        catch {tkdnd::drop_target register $w DND_Files}
+        bind $w <<DropEnter>>      {list copy}
+        bind $w <<DropPosition>>   {list copy}
+        bind $w <<Drop:DND_Files>> [list {*}$dropCmd %D %A]
+    }
+}
+
+# A buffer window accepts drops on its chrome and its body.
+proc SetupDropTarget {id} {
+    global Buffers Mied
+    if {!$Mied(dnd_support)} return
+
+    set win $Buffers($id,window)
+    set targets [list $win $win.titlebar $win.titlebar.label \
+                      $win.content $win.statusbar]
+    if {[IsEditor $id]} {
+        lappend targets $win.content.ctext
+    } else {
+        lappend targets $win.content.tree
+    }
+    RegisterDropTargets $targets [list DropFiles]
+}
+
+# The empty desktop accepts drops too, so a file can be opened before the
+# first buffer exists.
+proc SetupDesktopDropTarget {} {
+    global Mied
+    if {!$Mied(dnd_support)} return
+
+    RegisterDropTargets [list .desktop] [list DropFiles]
+}
+
+# Dropped directories become tree buffers; dropped files are opened as documents.
+proc DropFiles {data action} {
+    foreach path $data {
+        if {[file isdirectory $path]} {
+            NewTreeBuffer $path
+        } elseif {[file isfile $path]} {
+            OpenPath $path
+        }
+    }
+
+    return $action
+}
+
 # --- Main window ----------------------------------------------------------
 
 # Show or hide the sidebar and relayout maximized windows.
@@ -1618,6 +1677,8 @@ proc BuildUI {} {
     bind . <Control-f> OpenFindDialog
     bind . <Control-Tab> {CycleBuffer 1}
     bind . <Control-Shift-Tab> {CycleBuffer -1}
+
+    SetupDesktopDropTarget
 }
 
 # Save the active buffer (toolbar / Ctrl+S).
