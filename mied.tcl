@@ -1633,6 +1633,38 @@ proc BuildBufferViewBody {id} {
 
     bind $tree <ButtonRelease-1> [list ActivateBufferViewRow %W %x %y 0]
     bind $tree <Double-Button-1> [list ActivateBufferViewRow %W %x %y 1]
+
+    set menu $win.content.buffermenu
+    menu $menu -tearoff 0 \
+        -bg $Config(window_bg) -fg $Config(fg) \
+        -activebackground $Config(sel_bg) -activeforeground $Config(sel_fg) \
+        -disabledforeground $Config(status_fg) \
+        -font $Config(ui_font)
+    $menu add command -label "Close Buffer" -state disabled
+
+    # Match the file tree's right-click gestures, including macOS.
+    foreach event {<Button-3> <Button-2> <Control-Button-1>} {
+        bind $tree $event [list BufferViewContextMenu $id %W %x %y %X %Y]
+    }
+}
+
+# Capture the target when posting: changing the active buffer rebuilds the
+# tree, so the menu command must not depend on its selection at invocation.
+proc BufferViewContextMenu {viewId tree x y X Y} {
+    if {![SafeWindowExists $viewId]} return
+
+    set item [$tree identify item $x $y]
+    if {$item eq ""} {set item [lindex [$tree selection] 0]}
+
+    set menu [winfo parent $tree].buffermenu
+    $menu entryconfigure 0 -state disabled -command {}
+    if {[regexp {^buffer([0-9]+)$} $item -> id] && [SafeWindowExists $id]} {
+        $tree selection set $item
+        $tree focus $item
+        $menu entryconfigure 0 -state normal -command [list CloseBuffer $id]
+    }
+
+    catch {tk_popup $menu $X $Y}
 }
 
 # Rebuild the BufferView tree in AllBufferIds order.
@@ -2231,9 +2263,9 @@ proc BuildTreeBody {id} {
 
     # Right click pops the create/delete menu. Button-2 and Control-Button-1
     # cover macOS, where a right click may arrive as either of those.
-    bind $tree <Button-3> [list TreeContextMenu $id %W %x %y %X %Y]
-    bind $tree <Button-2> [list TreeContextMenu $id %W %x %y %X %Y]
-    bind $tree <Control-Button-1> [list TreeContextMenu $id %W %x %y %X %Y]
+    foreach event {<Button-3> <Button-2> <Control-Button-1>} {
+        bind $tree $event [list TreeContextMenu $id %W %x %y %X %Y]
+    }
 
     TreeBuildContextMenu $id
     TreeLoadRoot $id
